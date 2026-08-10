@@ -1,0 +1,270 @@
+"""TailorAI reconstruction service.
+
+Stateless. No database, no queue, no auth context, no storage credentials.
+It receives presigned URLs and returns refs. That is precisely what lets it run
+on this laptop today and on a rented RunPod GPU tomorrow with one URL change.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from contextlib import asynccontextmanager
+
+import numpy as np
+import trimesh
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+from .adapters.registry import build_body_adapter, build_segmentation_adapter
+from .bodymodel.humanoid import apply_cylindrical_uv
+from .config import settings
+from .core.fusion import fuse
+from .errors import ReconError, inference_failed, no_person_detected
+from .media.extract import extract_frames
+from .media.select import select_frames
+from .mesh.build import build_mesh
+from .runtime.vram import gpu_info
+from .schemas import (
+    AdapterInfo,
+    BodyInferRequest,
+    BodyInferResponse,
+    BuildMeshRequest,
+    BuildMeshResponse,
+    ExtractRequest,
+    ExtractResponse,
+    FuseRequest,
+    FuseResponse,
+    HealthResponse,
+    MaskResult,
+    SegmentRequest,
+    SegmentResponse,
+    SelectRequest,
+    SelectResponse,
+    TextureRequest,
+    TextureResponse,
+)
+from .storage import fetch_image, put_image
+from .texture.bake import bake_texture
+
+logging.basicConfig(
+    level=getattr(logging, settings().log_level.upper(), logging.INFO),
+    format='{"ts":"%(asctime)s","level":"%(levelname)s","service":"reconstruction",'
+    '"logger":"%(name)s","message":"%(message)s"}',
+)
+log = logging.getLogger("tailorai.reconstruction")
+
+_state: dict[str, object] = {}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    cfg = settings()
+
+    # The licence gate runs here, at construction. A model not cleared for the
+    # configured tier prevents the service from starting rather than failing on
+    # the first job (ADR-2).
+    log.info(
+        "starting: tier=%s body=%s seg=%s device=%s",
+        cfg.model_tier,
+        cfg.body_adapter,
+        cfg.segmentation_adapter,
+        cfg.resolved_device,
+    )
+
+    _state["body"] = build_body_adapter(cfg.body_adapter, cfg.model_tier)
+    _state["seg"] = build_segmentation_adapter(cfg.segmentation_adapter, cfg.model_tier)
+
+    # Warm up so the first real job doesn't pay model-load cost. This is the
+    # difference between a $0.09 scan and a $0.03 one (docs/06 §2).
+    try:
+        _state["body"].warmup()  # type: ignore[union-attr]
+        _state["seg"].warmup()  # type: ignore[union-attr]
+        _state["ready"] = True
+        log.info("adapters warm")
+    except Exception as exc:  # noqa: BLE001
+        _state["ready"] = False
+        log.error("warmup failed: %s", exc)
+
+    yield
+
+    _state.clear()
+
+
+app = FastAPI(
+    title="TailorAI Reconstruction",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+)
+
+
+async def require_api_key(x_api_key: str = Header(default="")) -> None:
+    """Shared-secret auth for the internal boundary.
+
+    Not user auth — the orchestrator is the only caller. It exists so a GPU
+    service exposed on a cloud network is not openly callable.
+    """
+    if x_api_key != settings().api_key:
+        raise HTTPException(status_code=401, detail={"code": "UNAUTHENTICATED"})
+
+
+@app.exception_handler(ReconError)
+async def recon_error_handler(_request: Request, exc: ReconError) -> JSONResponse:
+    detail = exc.detail if isinstance(exc.detail, dict) else {"code": "INTERNAL_ERROR"}
+    log.warning("request failed: %s", detail)
+    return JSONResponse(status_code=exc.status_code, content=detail)
+
+
+# ─────────────────────────── health ───────────────────────────
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    cfg = settings()
+    info = gpu_info()
+    body = _state.get("body")
+    seg = _state.get("seg")
+
+    return HealthResponse(
+        ready=bool(_state.get("ready", False)),
+        device=cfg.resolved_device,
+        gpuName=info["name"],  # type: ignore[arg-type]
+        vramTotalMb=info["totalMb"],  # type: ignore[arg-type]
+        vramFreeMb=info["freeMb"],  # type: ignore[arg-type]
+        loadedModels=[m for m in (getattr(body, "id", None), getattr(seg, "id", None)) if m],
+        adapters=AdapterInfo(body=cfg.body_adapter, segmentation=cfg.segmentation_adapter),
+        modelTier=cfg.model_tier,
+    )
+
+
+# ─────────────────────────── media plane ───────────────────────────
+
+
+@app.post("/media/extract", response_model=ExtractResponse, dependencies=[Depends(require_api_key)])
+async def media_extract(req: ExtractRequest) -> ExtractResponse:
+    return extract_frames(req)
+
+
+@app.post("/media/select", response_model=SelectResponse, dependencies=[Depends(require_api_key)])
+async def media_select(req: SelectRequest) -> SelectResponse:
+    return select_frames(req)
+
+
+# ─────────────────────────── inference plane ───────────────────────────
+
+
+@app.post("/infer/segment", response_model=SegmentResponse, dependencies=[Depends(require_api_key)])
+async def infer_segment(req: SegmentRequest) -> SegmentResponse:
+    started = time.perf_counter()
+    adapter = _state.get("seg")
+    if adapter is None:
+        raise inference_failed("segmentation adapter not initialised")
+
+    results: list[MaskResult] = []
+    people = 0
+
+    for frame, output_url in zip(req.frames, req.outputUrls, strict=False):
+        image = fetch_image(frame.imageUrl)
+        alpha = adapter.segment(image)  # type: ignore[union-attr]
+
+        foreground = float((alpha > 0.5).mean())
+
+        ys, xs = np.nonzero(alpha > 0.5)
+        bbox = (
+            (float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max()))
+            if len(xs) > 0
+            else None
+        )
+
+        put_image(output_url, (np.clip(alpha, 0, 1) * 255).astype(np.uint8), ".png")
+
+        if foreground > 0.02:
+            people = max(people, 1)
+
+        results.append(
+            MaskResult(index=frame.index, foregroundRatio=foreground, bbox=bbox)
+        )
+
+    if people == 0:
+        raise no_person_detected("no foreground found in any frame")
+
+    return SegmentResponse(
+        masks=results,
+        personCount=people,
+        elapsedMs=int((time.perf_counter() - started) * 1000),
+    )
+
+
+@app.post("/infer/body", response_model=BodyInferResponse, dependencies=[Depends(require_api_key)])
+async def infer_body(req: BodyInferRequest) -> BodyInferResponse:
+    started = time.perf_counter()
+    adapter = _state.get("body")
+    if adapter is None:
+        raise inference_failed("body adapter not initialised")
+
+    estimates = []
+    for frame in req.frames:
+        image = fetch_image(frame.imageUrl)
+        mask = None
+        if frame.maskUrl:
+            raw = fetch_image(frame.maskUrl)
+            mask = raw[:, :, 0].astype(np.float32) / 255.0 if raw.ndim == 3 else raw.astype(np.float32) / 255.0
+
+        estimates.append(adapter.infer(image, mask, frame.index))  # type: ignore[union-attr]
+
+    if not estimates:
+        raise no_person_detected("no frames produced an estimate")
+
+    return BodyInferResponse(
+        adapterId=getattr(adapter, "id", "unknown"),
+        bodyModel=getattr(adapter, "body_model", "MHR"),
+        bodyModelVersion=getattr(adapter, "body_model_version", "1.0"),
+        perFrame=estimates,
+        elapsedMs=int((time.perf_counter() - started) * 1000),
+    )
+
+
+@app.post("/infer/fuse", response_model=FuseResponse, dependencies=[Depends(require_api_key)])
+async def infer_fuse(req: FuseRequest) -> FuseResponse:
+    return fuse(req)
+
+
+@app.post("/infer/texture", response_model=TextureResponse, dependencies=[Depends(require_api_key)])
+async def infer_texture(req: TextureRequest) -> TextureResponse:
+    from .storage import fetch_bytes
+
+    raw = fetch_bytes(req.meshUrl)
+    loaded = trimesh.load(
+        file_obj=__import__("io").BytesIO(raw), file_type="glb", force="mesh", process=False
+    )
+    if not isinstance(loaded, trimesh.Trimesh):
+        raise inference_failed("mesh could not be loaded for texturing")
+
+    uvs = apply_cylindrical_uv(loaded)
+    return bake_texture(req, loaded, uvs)
+
+
+# ─────────────────────────── mesh plane ───────────────────────────
+
+
+@app.post("/mesh/build", response_model=BuildMeshResponse, dependencies=[Depends(require_api_key)])
+async def mesh_build(req: BuildMeshRequest) -> BuildMeshResponse:
+    return build_mesh(req)
+
+
+def main() -> None:
+    import uvicorn
+
+    cfg = settings()
+    uvicorn.run(
+        "app.main:app",
+        host=cfg.host,
+        port=cfg.port,
+        log_level=cfg.log_level,
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,29 @@
+{
+  "name": "@tailorai/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Job state machine — owns the reconstruction pipeline DAG",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput & node --watch dist/index.js",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/**/*.test.js",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.717.0",
+    "@aws-sdk/s3-request-presigner": "^3.717.0",
+    "@prisma/client": "^6.1.0",
+    "@tailorai/contracts": "*",
+    "@tailorai/model-registry": "*",
+    "bullmq": "^5.34.5",
+    "ioredis": "^5.4.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

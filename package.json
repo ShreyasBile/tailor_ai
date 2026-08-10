@@ -1,0 +1,44 @@
+{
+  "name": "tailorai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "3D digital human avatar reconstruction from phone photos or video",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "services/orchestrator"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "npm run clean --workspaces --if-present",
+    "verify:licenses": "node packages/model-registry/dist/verify-cli.js",
+    "db:generate": "npm run db:generate -w @tailorai/api",
+    "db:migrate": "npm run db:migrate -w @tailorai/api",
+    "db:studio": "npm run db:studio -w @tailorai/api",
+    "infra:up": "docker compose -f infra/compose/docker-compose.yml --env-file .env up -d",
+    "infra:down": "docker compose -f infra/compose/docker-compose.yml --env-file .env down",
+    "infra:logs": "docker compose -f infra/compose/docker-compose.yml logs -f",
+    "infra:reset": "docker compose -f infra/compose/docker-compose.yml --env-file .env down -v",
+    "wsl:up": "wsl -u root -- bash /mnt/d/tailorai/scripts/wsl-infra.sh up",
+    "wsl:down": "wsl -u root -- bash /mnt/d/tailorai/scripts/wsl-infra.sh down",
+    "wsl:status": "wsl -u root -- bash /mnt/d/tailorai/scripts/wsl-infra.sh status",
+    "stack:start": "powershell -ExecutionPolicy Bypass -File scripts/run-stack.ps1 start",
+    "stack:stop": "powershell -ExecutionPolicy Bypass -File scripts/run-stack.ps1 stop",
+    "stack:status": "powershell -ExecutionPolicy Bypass -File scripts/run-stack.ps1 status",
+    "smoke": "services/reconstruction/.venv/Scripts/python.exe scripts/smoke-test.py",
+    "dev:api": "npm run dev -w @tailorai/api",
+    "dev:worker": "npm run dev -w @tailorai/orchestrator",
+    "dev:mobile": "npm --prefix apps/mobile run start"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

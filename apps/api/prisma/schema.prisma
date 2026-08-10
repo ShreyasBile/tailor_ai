@@ -1,0 +1,401 @@
+// TailorAI data model. See docs/03-data-model.md for rationale.
+//
+// The central idea: BodyCore (permanent, ~2 KB, parametric) is separated from
+// AvatarRender (disposable, ~5 MB, mesh+texture). One Core has many Renders
+// over time, so improving the pipeline never invalidates a user's profile.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════ Identity ═══════════════════════════
+
+model User {
+  id          String  @id @default(uuid()) @db.Uuid
+  externalId  String  @unique
+  email       String? @unique
+  displayName String?
+
+  // Self-reported. heightCm is the primary anchor for metric scale (S7) —
+  // monocular reconstruction cannot recover absolute size from pixels.
+  heightCm   Float?
+  weightKg   Float?
+  birthYear  Int?
+  sexAtBirth SexAtBirth?
+
+  dataRegion String @default("eu")
+
+  consents        Consent[]
+  captureSessions CaptureSession[]
+  bodyCores       BodyCore[]
+  jobs            ReconstructionJob[]
+  refreshTokens   RefreshToken[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([deletedAt])
+}
+
+enum SexAtBirth {
+  FEMALE
+  MALE
+  UNSPECIFIED
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Hash only — a leaked table must not yield usable tokens.
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// Versioned ledger, not a boolean: BIPA/GDPR require *proving* consent years
+// later, including when and from where. See docs/06 §6.1.
+model Consent {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      ConsentKind
+  version   String
+  granted   Boolean
+  grantedAt DateTime    @default(now())
+  revokedAt DateTime?
+  ipAddress String?
+  userAgent String?
+
+  @@index([userId, kind])
+}
+
+enum ConsentKind {
+  BIOMETRIC_PROCESSING
+  RAW_MEDIA_RETENTION
+  MODEL_IMPROVEMENT
+}
+
+// ═══════════════════════════ Capture & assets ═══════════════════════════
+
+model CaptureSession {
+  id     String        @id @default(uuid()) @db.Uuid
+  userId String        @db.Uuid
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mode   CaptureMode
+  status SessionStatus @default(UPLOADING)
+
+  deviceModel  String?
+  osVersion    String?
+  qualityHints Json?
+
+  assets  Asset[]
+  uploads Upload[]
+  jobs    ReconstructionJob[]
+
+  createdAt  DateTime  @default(now())
+  purgeAfter DateTime
+  purgedAt   DateTime?
+
+  @@index([userId, createdAt])
+  @@index([purgeAfter, purgedAt])
+}
+
+enum CaptureMode {
+  VIDEO_360
+  PHOTO_SET
+}
+
+enum SessionStatus {
+  UPLOADING
+  READY
+  PROCESSING
+  COMPLETED
+  FAILED
+  PURGED
+}
+
+model Asset {
+  id        String          @id @default(uuid()) @db.Uuid
+  sessionId String?         @db.Uuid
+  session   CaptureSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  kind       AssetKind
+  storageKey String    @unique
+  bucket     String
+  mimeType   String
+  sizeBytes  BigInt
+  // Content-addressed: enables retry-resume, dedupe, integrity verification.
+  sha256     String
+
+  width      Int?
+  height     Int?
+  durationMs Int?
+
+  // Front-camera capture is mirrored. The pipeline flips it before inference —
+  // otherwise the body reconstructs laterally inverted, which looks plausible
+  // and so would never be caught downstream.
+  mirrored Boolean @default(false)
+
+  metadata Json?
+
+  exports Export[]
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  @@index([sessionId, kind])
+  @@index([sha256])
+  @@index([expiresAt])
+}
+
+enum AssetKind {
+  RAW_VIDEO
+  RAW_PHOTO
+  EXTRACTED_FRAME
+  MASK
+  PREPARED_FRAME
+  MESH_GLB
+  MESH_OBJ
+  TEXTURE_ATLAS
+  THUMBNAIL
+  METADATA_SIDECAR
+}
+
+// In-flight multipart upload. Tracks landed parts so a phone that dies
+// mid-upload resumes rather than restarting a 60 MB transfer.
+model Upload {
+  id        String         @id @default(uuid()) @db.Uuid
+  sessionId String         @db.Uuid
+  session   CaptureSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  kind           AssetKind
+  storageKey     String
+  s3UploadId     String
+  fileName       String
+  mimeType       String
+  sizeBytes      BigInt
+  sha256         String
+  partSizeBytes  Int
+  totalParts     Int
+  completedParts Int[]     @default([])
+  mirrored       Boolean   @default(false)
+
+  isComplete  Boolean   @default(false)
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+
+  @@index([sessionId])
+  @@index([expiresAt])
+}
+
+// ═══════════════════════════ Jobs ═══════════════════════════
+
+model ReconstructionJob {
+  id        String         @id @default(uuid()) @db.Uuid
+  userId    String         @db.Uuid
+  user      User           @relation(fields: [userId], references: [id])
+  sessionId String         @db.Uuid
+  session   CaptureSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  status   JobStatus @default(QUEUED)
+  progress Float     @default(0)
+  options  Json?
+
+  // Protects against a flaky phone creating three reconstructions.
+  idempotencyKey String? @unique
+
+  pipelineVersion String
+  modelVersions   Json?
+
+  stages   JobStage[]
+  bodyCore BodyCore?
+  render   AvatarRender?
+
+  errorCode    String?
+  errorMessage String?
+
+  queuedAt      DateTime  @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  computeMs     Int?
+  estimatedCost Decimal?  @db.Decimal(10, 6)
+
+  @@index([userId, queuedAt])
+  @@index([status])
+  @@index([sessionId])
+}
+
+enum JobStatus {
+  QUEUED
+  VALIDATING
+  EXTRACTING
+  SELECTING
+  SEGMENTING
+  RECONSTRUCTING
+  FUSING
+  TEXTURING
+  OPTIMISING
+  EXPORTING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model JobStage {
+  id    String            @id @default(uuid()) @db.Uuid
+  jobId String            @db.Uuid
+  job   ReconstructionJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  name     String
+  sequence Int
+  status   StageStatus @default(PENDING)
+  attempt  Int         @default(0)
+
+  // sha256 refs into object storage — a retry resumes from the last good stage
+  // rather than restarting a 3-minute job from zero.
+  inputRef  String?
+  outputRef String?
+
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  durationMs  Int?
+  errorCode   String?
+  errorDetail Json?
+
+  @@unique([jobId, name, attempt])
+  @@index([jobId, sequence])
+}
+
+enum StageStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+  DEGRADED
+}
+
+// ═══════════════ THE PERMANENT PROFILE ═══════════════
+//
+// ~2 KB. Survives every renderer upgrade. This is the product's actual asset;
+// the mesh is a render of it.
+
+model BodyCore {
+  id     String             @id @default(uuid()) @db.Uuid
+  userId String             @db.Uuid
+  user   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId  String?            @unique @db.Uuid
+  job    ReconstructionJob? @relation(fields: [jobId], references: [id])
+
+  version   Int     @default(1)
+  isCurrent Boolean @default(true)
+
+  bodyModel        BodyModelKind
+  bodyModelVersion String
+  // Native Float[] rather than Json: typed, and usable for similarity search
+  // later (pgvector/cube) — which is how sizing recommendations get built.
+  shapeParams      Float[]
+  // Uncertainty stored alongside the estimate. Without it, a guess is
+  // indistinguishable from a measurement.
+  shapeConfidence  Float[]
+
+  annyParams  Float[]
+  annyVersion String?
+
+  // Scale carries provenance and is never silently baked in.
+  scaleSource     ScaleSource
+  heightCm        Float?
+  scaleConfidence Float?
+  metricScale     Float       @default(1.0)
+
+  frameCount     Int
+  captureMode    CaptureMode
+  overallQuality Float?
+  coverageDegrees Float?
+
+  renders AvatarRender[]
+
+  createdAt    DateTime  @default(now())
+  supersededAt DateTime?
+
+  @@index([userId, isCurrent])
+  @@index([userId, version])
+}
+
+enum BodyModelKind {
+  MHR
+  ANNY
+}
+
+enum ScaleSource {
+  USER_HEIGHT
+  ARKIT_DEPTH
+  REFERENCE_OBJECT
+  STATISTICAL_PRIOR
+}
+
+// ═══════════════ Derived, disposable ═══════════════
+
+model AvatarRender {
+  id         String             @id @default(uuid()) @db.Uuid
+  bodyCoreId String             @db.Uuid
+  bodyCore   BodyCore           @relation(fields: [bodyCoreId], references: [id], onDelete: Cascade)
+  jobId      String?            @unique @db.Uuid
+  job        ReconstructionJob? @relation(fields: [jobId], references: [id])
+
+  rendererVersion String
+  vertexCount     Int
+  triangleCount   Int
+  textureRes      Int?
+  isTextured      Boolean @default(true)
+  isDegraded      Boolean @default(false)
+
+  // Which regions were observed vs inpainted. Surfaced in the viewer so
+  // invented geometry is never presented as fact.
+  coverage Json?
+
+  glbAssetId       String? @db.Uuid
+  thumbnailAssetId String? @db.Uuid
+  textureAssetId   String? @db.Uuid
+
+  exports   Export[]
+  createdAt DateTime @default(now())
+
+  @@index([bodyCoreId])
+}
+
+model Export {
+  id       String       @id @default(uuid()) @db.Uuid
+  renderId String       @db.Uuid
+  render   AvatarRender @relation(fields: [renderId], references: [id], onDelete: Cascade)
+
+  format    ExportFormat
+  assetId   String       @db.Uuid
+  asset     Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  sizeBytes BigInt
+
+  downloadCount Int      @default(0)
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime?
+
+  @@index([renderId, format])
+}
+
+enum ExportFormat {
+  GLB
+  OBJ_ZIP
+  USDZ
+  FBX
+}

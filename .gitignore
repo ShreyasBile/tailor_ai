@@ -1,0 +1,57 @@
+# Dependencies
+node_modules/
+.pnp.*
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Build output
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+.expo/
+web-build/
+
+# Local data — all runtime state lives on D: (C: has limited free space)
+.data/
+*.db
+*.sqlite
+
+# Model weights — never commit. Downloaded via scripts/download-weights.
+weights/
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Generated
+apps/api/prisma/generated/
+packages/contracts/dist/
+packages/model-registry/dist/
+
+# Editor / OS
+# Machine-local tool permissions — contains absolute paths from one dev's box.
+.claude/settings.local.json
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Test artifacts
+coverage/
+.pytest_cache/
+.ruff_cache/

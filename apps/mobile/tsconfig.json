@@ -1,0 +1,20 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "exclude": [
+    "node_modules",
+    // Preserved reference implementation for the dev-client build path.
+    // react-native-filament is not installed here: it cannot load in Expo Go
+    // and does not support this React Native version. Reinstate the dependency
+    // and drop this exclusion when building a native client.
+    "src/features/viewer/AvatarViewer.filament.tsx"
+  ]
+}

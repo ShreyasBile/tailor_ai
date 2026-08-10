@@ -1,0 +1,88 @@
+# TailorAI local infrastructure.
+#
+# All volumes bind under ${DATA_ROOT} (D:/tailorai/.data) rather than
+# Docker-managed volumes on C:, which has limited free space.
+#
+#   npm run infra:up      start
+#   npm run infra:down    stop
+#   npm run infra:reset   stop and DESTROY all local data
+
+name: tailorai
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tailorai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tailorai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tailorai_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-tailorai}
+      # Deterministic collation so ORDER BY matches across dev machines
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ${DATA_ROOT:-./.data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tailorai} -d ${POSTGRES_DB:-tailorai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: tailorai-redis
+    restart: unless-stopped
+    # appendonly: queue jobs must survive a restart (job state is in Postgres,
+    # but in-flight queue entries should not silently vanish)
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ${DATA_ROOT:-./.data}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: tailorai-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-tailorai}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-tailorai_dev_secret}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ${DATA_ROOT:-./.data}/minio:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the bucket and lock it down. Buckets are never public —
+  # all access is via short-lived presigned URLs (docs/02 §6).
+  minio-init:
+    image: minio/mc:latest
+    container_name: tailorai-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_BUCKET: ${S3_BUCKET:-tailorai}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-tailorai}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-tailorai_dev_secret}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${S3_ACCESS_KEY_ID} $${S3_SECRET_ACCESS_KEY} &&
+      mc mb --ignore-existing local/$${S3_BUCKET} &&
+      mc anonymous set none local/$${S3_BUCKET} &&
+      echo 'bucket ready (private)' "
+    restart: "no"

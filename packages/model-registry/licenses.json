@@ -1,0 +1,151 @@
+{
+  "$comment": [
+    "Authoritative model licence registry. See docs/00 ADR-2.",
+    "`verify-licenses` fails the build when MODEL_TIER=production and any",
+    "model with commercial_ok:false is reachable. Adding a model here without",
+    "a licence review is the failure mode this file exists to prevent."
+  ],
+  "schemaVersion": 1,
+  "models": [
+    {
+      "id": "sam3dbody-vith-v1",
+      "name": "SAM 3D Body (ViT-H)",
+      "vendor": "Meta",
+      "role": "body_reconstruction",
+      "license": "SAM License",
+      "licenseUrl": "https://github.com/facebookresearch/sam-3d-body/blob/main/LICENSE",
+      "commercial_ok": true,
+      "commercialNote": "Grant is 'non-exclusive, worldwide, non-transferable and royalty-free' with no commercial carve-out and no MAU threshold. Restrictions are acceptable-use (no weapons/ITAR/espionage), publication attribution, and passing the licence along with redistributions.",
+      "source_url": "https://huggingface.co/facebook/sam-3d-body-vith",
+      "bodyModel": "MHR",
+      "approxWeightsGb": 1.3,
+      "estPeakVramGb": 4.0,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "sam3dbody-dinov3-v1",
+      "name": "SAM 3D Body (DINOv3-H+)",
+      "vendor": "Meta",
+      "role": "body_reconstruction",
+      "license": "SAM License",
+      "licenseUrl": "https://github.com/facebookresearch/sam-3d-body/blob/main/LICENSE",
+      "commercial_ok": true,
+      "commercialNote": "Same grant as ViT-H. Higher accuracy, tighter fit in 8 GB.",
+      "source_url": "https://huggingface.co/facebook/sam-3d-body-dinov3",
+      "bodyModel": "MHR",
+      "approxWeightsGb": 1.7,
+      "estPeakVramGb": 5.0,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "mhr-v1",
+      "name": "Momentum Human Rig",
+      "vendor": "Meta",
+      "role": "body_model",
+      "license": "Apache-2.0",
+      "licenseUrl": "https://github.com/facebookresearch/MHR",
+      "commercial_ok": true,
+      "commercialNote": "Apache 2.0. Independently licensed from SAM 3D Body, so the body model survives any change to the estimator's terms.",
+      "source_url": "https://github.com/facebookresearch/MHR",
+      "vertices": 18439,
+      "joints": 127,
+      "shapeCoefficients": 45,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "anny-v1",
+      "name": "Anny",
+      "vendor": "NAVER Labs Europe",
+      "role": "body_model",
+      "license": "Apache-2.0",
+      "licenseUrl": "https://github.com/naver/anny",
+      "commercial_ok": true,
+      "commercialNote": "Apache 2.0, ungated (`pip install anny`). Provides interpretable phenotype parameters. Supports all ages; we deliberately restrict to 18+ (docs/06 §6.2).",
+      "source_url": "https://github.com/naver/anny",
+      "vertices": 13718,
+      "bones": 163,
+      "phenotypeParameters": 11,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "birefnet-v1",
+      "name": "BiRefNet",
+      "vendor": "ZhengPeng7",
+      "role": "segmentation",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/ZhengPeng7/BiRefNet",
+      "commercial_ok": true,
+      "commercialNote": "MIT. Chosen over RMBG-2.0 (non-commercial) and SAM2 (requires prompts; we want zero user input).",
+      "source_url": "https://huggingface.co/ZhengPeng7/BiRefNet",
+      "approxWeightsGb": 1.0,
+      "estPeakVramGb": 3.0,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "xatlas",
+      "name": "xatlas",
+      "vendor": "jpcy",
+      "role": "uv_unwrap",
+      "license": "MIT",
+      "licenseUrl": "https://github.com/jpcy/xatlas",
+      "commercial_ok": true,
+      "commercialNote": "MIT. UV atlas is precomputed once per body topology and cached — never per job.",
+      "source_url": "https://github.com/jpcy/xatlas",
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "mock-v1",
+      "name": "Mock adapter",
+      "vendor": "TailorAI",
+      "role": "body_reconstruction",
+      "license": "proprietary",
+      "licenseUrl": "",
+      "commercial_ok": true,
+      "commercialNote": "Deterministic fixtures. Lets the full pipeline run in CI with no GPU and no weights.",
+      "source_url": "",
+      "verifiedOn": "2026-08-07"
+    },
+
+    {
+      "$comment": "──── BELOW THIS LINE: NOT SHIPPABLE. Research tier only. ────",
+
+      "id": "pshuman-v1",
+      "name": "PSHuman",
+      "vendor": "pengHTYX",
+      "role": "body_reconstruction",
+      "license": "SMPL-X (non-commercial)",
+      "licenseUrl": "https://smpl-x.is.tue.mpg.de/modellicense.html",
+      "commercial_ok": false,
+      "commercialNote": "BLOCKED. Depends on SMPL-X: non-commercial, and additionally forbids training networks for commercial use — so derived weights are contaminated, not merely dependent. Requires >40 GB VRAM at 768px (24 GB at 512px), so it cannot run on the 8 GB dev GPU regardless. Meshcapade acquired by Epic Feb 2026; future terms unknown.",
+      "source_url": "https://github.com/pengHTYX/PSHuman",
+      "estPeakVramGb": 40.0,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "lhm-0.5b",
+      "name": "LHM-0.5B",
+      "vendor": "Alibaba",
+      "role": "body_reconstruction",
+      "license": "SMPL-X (non-commercial)",
+      "licenseUrl": "https://smpl-x.is.tue.mpg.de/modellicense.html",
+      "commercial_ok": false,
+      "commercialNote": "BLOCKED. Highest reported quality (25.18 PSNR / 0.951 SSIM) but SMPL-X derived. Note PSNR measures novel-view appearance, not metric body accuracy — its lead is in the layer we treat as disposable.",
+      "source_url": "https://github.com/aigc3d/LHM",
+      "estPeakVramGb": 16.0,
+      "verifiedOn": "2026-08-07"
+    },
+    {
+      "id": "sifu-v1",
+      "name": "SIFU",
+      "vendor": "River-Zhang",
+      "role": "body_reconstruction",
+      "license": "SMPL-X (non-commercial)",
+      "licenseUrl": "https://smpl-x.is.tue.mpg.de/modellicense.html",
+      "commercial_ok": false,
+      "commercialNote": "BLOCKED. SMPL-X derived.",
+      "source_url": "https://github.com/River-Zhang/SIFU",
+      "estPeakVramGb": 16.0,
+      "verifiedOn": "2026-08-07"
+    }
+  ]
+}
