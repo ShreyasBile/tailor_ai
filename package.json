@@ -35,7 +35,8 @@
     "smoke": "services/reconstruction/.venv/Scripts/python.exe scripts/smoke-test.py",
     "dev:api": "npm run dev -w @tailorai/api",
     "dev:worker": "npm run dev -w @tailorai/orchestrator",
-    "dev:mobile": "npm --prefix apps/mobile run start"
+    "app:run": "cd apps/app_flutter && flutter run",
+    "app:apk": "cd apps/app_flutter && flutter build apk --debug"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

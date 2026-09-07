@@ -55,3 +55,11 @@ logs/
 coverage/
 .pytest_cache/
 .ruff_cache/
+
+# Flutter
+apps/app_flutter/build/
+apps/app_flutter/.dart_tool/
+apps/app_flutter/.flutter-plugins*
+apps/app_flutter/android/.gradle/
+apps/app_flutter/android/local.properties
+apps/app_flutter/.idea/

@@ -1,0 +1,48 @@
+name: tailorai
+description: Your body, measured once. A 3D Digital Body Profile from your phone.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.8.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Networking — cached
+  http: ^1.2.2
+  crypto: ^3.0.6
+
+  # State — cached
+  provider: ^6.1.2
+
+  # Storage
+  path_provider: ^2.1.5          # cached
+  flutter_secure_storage: ^9.2.2 # fetch: keystore-backed tokens
+
+  # Capture — cached
+  camera: ^0.10.6
+  permission_handler: ^11.3.1  # 10.x uses removed v1 embedding
+  sensors_plus: ^4.0.2           # fetch: tilt check (small)
+
+  # UX / brand — cached
+  google_fonts: ^6.2.1
+
+  # Routing — fetch (small)
+  go_router: ^14.6.2
+
+  # 3D — fetch. Renders TEXTURED GLB via <model-viewer>. The reason for Flutter.
+  model_viewer_plus: ^1.9.0
+
+  # Export sharing — fetch (small)
+  share_plus: ^10.1.2
+
+dev_dependencies:
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/

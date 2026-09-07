@@ -120,86 +120,71 @@ npm run dev:api
 npm run dev:worker
 ```
 
-Then the app:
-
-```bash
-cd apps/mobile && npx expo start --dev-client
-```
-
-The mobile app needs a **dev client build**, not Expo Go — `react-native-filament`
-and the camera are native modules. Build once with `npx expo prebuild` then
-`npx expo run:android` (or `run:ios` on a Mac).
-
-Point the app at your machine's LAN IP, not localhost:
-
-```bash
-EXPO_PUBLIC_API_URL=http://192.168.1.x:3000 npx expo start --dev-client
-```
+Then the app — see §4a.
 
 ---
 
-## 4a. Testing on a phone
+## 4a. Testing on a phone (Flutter, Android)
 
-The app runs in **Expo Go** — no native build, no Mac, no Apple Developer
-account.
+The mobile app is **Flutter** (`apps/app_flutter`). It compiles to a native
+APK; there is no Expo Go and no cloud build in the loop. This machine already
+has everything needed — Flutter 3.32, the Android SDK, and the JDK bundled with
+Android Studio.
 
-> ### The SDK version is pinned to 54. Do not bump it casually.
->
-> Expo Go does **not** track the newest SDK. It tracks whatever build Apple
-> currently has on the App Store, and that lags — badly. As of this writing the
-> newest Expo SDK is **57**, but the App Store ships **Expo Go 54.0.2, last
-> updated 2025-09-23**, which only opens **SDK 54** projects. A brand-new
-> iPhone on current iOS still gets 54, and the App Store correctly shows "no
-> update available".
->
-> Before changing `expo` in `apps/mobile/package.json`, check what Apple is
-> actually serving:
->
-> ```bash
-> curl -s "https://itunes.apple.com/lookup?bundleId=host.exp.Exponent" | jq -r ".results[0].version"
-> ```
->
-> Match the project to that number. `npm view expo dist-tags` tells you what
-> Expo has released, which is a different and much less useful question.
+**Run on a connected Android device (USB debugging on):**
 
-1. Install **Expo Go** from the App Store (or Play Store).
-2. Put the phone on the **same Wi-Fi** as this PC (`Airtel_Air_Varad`).
-3. `npm run stack:start` and `cd apps/mobile && npx expo start --host lan`
-4. iPhone: scan the QR with the **Camera** app. Android: scan from inside Expo Go.
-   Or open `exp://192.168.1.22:8081` directly.
+```bash
+cd apps/app_flutter && flutter run
+```
 
-If the phone's IP subnet changes, update **both**:
+`flutter run` gives hot reload: edit a `.dart` file, press `r` in the terminal,
+the change is on the phone in under a second. `flutter devices` lists what's
+connected.
 
-- `apps/mobile/.env` → `EXPO_PUBLIC_API_URL`
-- repo-root `.env` → `S3_ENDPOINT` (presigned storage URLs go to the device too)
+**Or build an APK to sideload:**
 
-Then restart the API so it re-reads them.
+```bash
+npm run app:apk
+# → apps/app_flutter/build/app/outputs/flutter-apk/app-debug.apk
+```
 
-**Two things reliably break this:**
+### Networking
 
-- **A VPN on either device.** A `ProTUN` adapter (10.2.0.2) is active on this
-  machine; VPNs commonly block LAN-to-LAN traffic. Disconnect it if the phone
-  cannot reach the API.
-- **`localhost` anywhere in config.** On a phone that means the phone. Every
-  address the device receives must be `192.168.1.22`.
+The app talks to the same backend, over the LAN, at `http://192.168.1.22:3000`
+by default (`lib/core/config.dart`). The phone must be on the **same Wi-Fi** as
+this PC, and the repo-root `.env` `S3_ENDPOINT` must also be `192.168.1.22`
+(presigned storage URLs are handed to the device, so the 3D viewer loads its GLB
+from there too).
 
-Verify from the phone's browser before blaming the app —
+Two robust alternatives to the LAN IP:
+
+- **USB reverse tunnel** — cleanest, immune to VPN/firewall. With the device
+  plugged in:
+  ```bash
+  adb reverse tcp:3000 tcp:3000 && adb reverse tcp:9000 tcp:9000
+  flutter run --dart-define=API_BASE=http://localhost:3000
+  ```
+  Then also set the repo-root `.env` `S3_ENDPOINT=http://localhost:9000` and
+  restart the API, so presigned URLs resolve through the tunnel.
+- **Emulator** — use `--dart-define=API_BASE=http://10.0.2.2:3000` (the
+  emulator's alias for the host loopback).
+
+**Two things reliably break LAN access:** a VPN on either device (blocks
+LAN-to-LAN), and `localhost` left in any address the device receives (on a phone
+that means the phone). Verify from the phone's browser first —
 `http://192.168.1.22:3000/v1/health` should return JSON.
 
-### Viewer difference in Expo Go
+### The viewer renders textures
 
-Expo Go cannot load native modules, so the 3D viewer runs on **expo-gl +
-three.js** (`src/features/viewer/ThreeViewer.tsx`). Geometry, proportions and
-metric scale render correctly; **embedded GLB textures do not**, because
-three.js decodes them through browser APIs React Native lacks. The viewer says
-so on screen rather than passing an untextured body off as finished.
+`model_viewer_plus` renders the **textured** GLB natively — the whole reason the
+frontend moved to Flutter. No dev-client caveat, no untextured fallback.
 
-The Filament implementation is preserved at
-`src/features/viewer/AvatarViewer.filament.tsx` for the dev-client path. To use
-it: reinstall `react-native-filament`, switch the export in
-`src/features/viewer/index.ts`, drop the tsconfig exclusion, and build a dev
-client. On iOS that needs macOS or EAS Build plus a paid Apple Developer
-membership.
+### Android build config worth knowing
+
+- `minSdk = 23` (`android/app/build.gradle.kts`) — covers webview, camera and
+  secure storage.
+- `usesCleartextTraffic="true"` in the manifest — the dev backend is plain HTTP
+  on the LAN. Remove it for production (HTTPS).
 
 ---
 

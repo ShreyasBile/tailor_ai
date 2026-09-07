@@ -53,12 +53,12 @@ cd services/reconstruction && .venv/Scripts/python.exe -m pytest tests/ -q
 | [02 — System Architecture](docs/02-system-architecture.md) | Components, folder structure, job state machine, security |
 | [03 — Data Model](docs/03-data-model.md) | Postgres/Prisma schema, retention & deletion |
 | [04 — API Spec](docs/04-api-spec.md) | REST + SSE contract, error taxonomy |
-| [05 — Mobile App](docs/05-mobile-app.md) | Expo stack, guided capture, 3D viewer, design language |
+| [05 — Mobile App](docs/05-mobile-app.md) | Flutter stack, guided capture, 3D viewer, design language |
 | [06 — Infra, Cost & Risk](docs/06-infra-cost-risk.md) | Compute/storage/GPU estimates, **privacy & legal**, risk register |
 
 ## Stack
 
-**Mobile** Expo / React Native · `react-native-filament` · VisionCamera
+**Mobile** Flutter (Dart) · `model_viewer_plus` (textured GLB) · `camera` · `go_router` · `provider`
 **API** NestJS (Fastify) · Postgres + Prisma · Redis + BullMQ · S3-compatible storage
 **Pipeline** Node orchestrator (state machine) → stateless Python GPU service (FastAPI + PyTorch)
 **Models** SAM 3D Body → MHR · BiRefNet · xatlas — all behind swappable adapters
