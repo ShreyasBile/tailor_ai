@@ -1,0 +1,10 @@
+# Four-view scan: person detection, 33-point pose and person matte (Apache-2.0).
+#
+# Install WITHOUT dependencies, after requirements.txt:
+#   pip install --no-deps -r requirements-scan.txt
+#
+# mediapipe's declared dependency set drags in opencv-contrib-python (clashes
+# with opencv-python-headless), jax and sounddevice — none used here. Its real
+# runtime deps are listed in requirements.txt. 0.10.21 is the last release
+# whose `solutions` API ships with the models.
+mediapipe==0.10.21

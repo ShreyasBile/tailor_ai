@@ -39,6 +39,26 @@ in `%LOCALAPPDATA%\Docker\run\` that cannot be deleted while Windows holds it.
 **A reboot clears it.** Until then, use the WSL2 path in §3, which runs the same
 services on the same ports with the same credentials.
 
+**Faster fix, no reboot:** quit Docker Desktop, rename the folder holding the
+orphaned socket (the file itself can't be deleted, but its parent can be
+moved), and start Docker again — it recreates the folder:
+
+```bash
+mv "$LOCALAPPDATA/Docker/run" "$LOCALAPPDATA/Docker/run.stale-$(date +%s)"
+```
+
+Force-killing Docker Desktop orphans the socket again, so expect to repeat this
+after any hard stop.
+
+**Low-RAM machines (≈8 GB).** Uncapped, Docker's WSL2 VM reserves ~3.5 GB and
+the other processes fail with "paging file is too small" or `OpenBLAS error:
+Memory allocation still failed`. Two settings fix it:
+
+- `%USERPROFILE%\.wslconfig` with `[wsl2]` / `memory=2GB` caps the VM (then
+  `wsl --shutdown` and restart Docker). Postgres + Redis + MinIO fit easily.
+- `OPENBLAS_NUM_THREADS=2` and `OMP_NUM_THREADS=2` in `.env` stop numpy from
+  allocating a buffer per core in the reconstruction service.
+
 ---
 
 ## 1. Prerequisites
@@ -58,12 +78,26 @@ npm install
 ```
 
 ```bash
-cd services/reconstruction && python3 -m venv .venv && .venv/Scripts/python.exe -m pip install -r requirements.txt
+cd services/reconstruction && py -3.12 -m venv .venv && .venv/Scripts/python.exe -m pip install -r requirements.txt pytest pytest-asyncio ruff
 ```
 
+The venv is machine-specific (it hard-links its base interpreter). After
+copying the repo to another machine, delete `.venv` and recreate it.
+
 ```bash
-cd apps/mobile && npm install --legacy-peer-deps
+cd apps/app_flutter && flutter pub get
 ```
+
+The app needs Flutter ≥ 3.32 (Dart ≥ 3.8); `flutter upgrade` if older.
+
+Then, with infrastructure up (§3), apply the schema:
+
+```bash
+cd apps/api && npx prisma migrate deploy
+```
+
+`prisma` reads `DATABASE_URL` from the environment; export it from the root
+`.env` first, or use `npm run db:migrate` with it set.
 
 ---
 
@@ -98,8 +132,30 @@ npm run db:migrate
 
 ## 4. Run the stack
 
-One command starts all three processes with the shared `.env` loaded, logging
-to `.data\logs\`:
+**One click:** the **TailorAI** desktop shortcut runs `scripts/start-tailorai.ps1`,
+which does everything in order — repairs a copied venv / missing npm links,
+starts Postgres, Redis and MinIO in WSL, rebuilds whatever changed, applies
+migrations, seeds the catalogue on a fresh database, starts the four services
+(waiting for each to be healthy) and opens http://localhost:3001. Press Enter in
+its window to stop everything; closing the window leaves TailorAI running, and
+running the shortcut again brings the stop prompt back. Same thing from a
+terminal:
+
+```bash
+npm run launch
+```
+
+After moving or copying the repo, recreate the shortcut so it points at the new
+location:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/install-shortcut.ps1
+```
+
+**Just the services** (infrastructure already up, builds current) — starts
+reconstruction, API, orchestrator and web with the shared `.env` loaded,
+logging to `.data\logs\`. Ports come from `.env` (`RECON_PORT`, `API_PORT`); a
+service that is already healthy is left alone:
 
 ```bash
 npm run stack:start
@@ -325,4 +381,5 @@ npm run infra:reset
 
 MinIO console: `http://localhost:9001` (`tailorai` / `tailorai_dev_secret`).
 API health: `http://localhost:3000/v1/health/ready`.
-Reconstruction health: `http://localhost:8000/health`.
+Reconstruction health: `http://localhost:<RECON_PORT>/health` (`RECON_PORT` in
+`.env`; 8001 on this machine, because another local app holds 8000).

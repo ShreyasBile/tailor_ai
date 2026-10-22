@@ -14,7 +14,8 @@
     "db:deploy": "prisma migrate deploy",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
-    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "db:seed": "node prisma/seed.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.717.0",

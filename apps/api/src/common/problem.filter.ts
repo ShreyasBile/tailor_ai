@@ -6,7 +6,20 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { AppError, buildProblem, type ProblemDetails } from '@tailorai/contracts';
+import { AppError, buildProblem, type ErrorCode, type ProblemDetails } from '@tailorai/contracts';
+
+/** Taxonomy code for framework-raised HttpExceptions (e.g. ParseUUIDPipe's
+ * 400). Anything unmapped stays INTERNAL_ERROR, but keeps its real status. */
+const HTTP_STATUS_CODE: Record<number, ErrorCode> = {
+  400: 'VALIDATION_FAILED',
+  401: 'UNAUTHENTICATED',
+  403: 'FORBIDDEN',
+  404: 'NOT_FOUND',
+  409: 'CONFLICT',
+  413: 'FILE_TOO_LARGE',
+  422: 'VALIDATION_FAILED',
+  429: 'RATE_LIMITED',
+};
 
 /**
  * Single place where errors become HTTP.
@@ -34,10 +47,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       internal = exception.context;
     } else if (exception instanceof HttpException) {
       const status = exception.getStatus();
-      problem = buildProblem(
-        status === 404 ? 'NOT_FOUND' : status === 401 ? 'UNAUTHENTICATED' : status === 403 ? 'FORBIDDEN' : 'INTERNAL_ERROR',
-        { instance },
-      );
+      problem = buildProblem(HTTP_STATUS_CODE[status] ?? 'INTERNAL_ERROR', { instance });
       problem.status = status;
     } else {
       problem = buildProblem('INTERNAL_ERROR', { instance });

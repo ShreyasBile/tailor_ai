@@ -40,6 +40,14 @@ export type PaginationQuery = z.infer<typeof PaginationQuery>;
 
 // ─────────────────────────── Users & consent ───────────────────────────
 
+/** How the user likes clothes to fit. Shifts every size recommendation. */
+export const FitPreference = z.enum(['SNUG', 'REGULAR', 'LOOSE']);
+export type FitPreference = z.infer<typeof FitPreference>;
+
+/** Which of the four controlled photos an upload is. */
+export const ScanView = z.enum(['front', 'back', 'left', 'right']);
+export type ScanView = z.infer<typeof ScanView>;
+
 /**
  * Height is the primary anchor for metric scale (docs/01 §S7). Monocular
  * reconstruction cannot recover absolute size from pixels — this one number
@@ -53,6 +61,7 @@ export const UserProfile = z.object({
   weightKg: z.number().min(20).max(400).nullable(),
   birthYear: z.number().int().min(1900).max(2100).nullable(),
   sexAtBirth: SexAtBirth.nullable(),
+  fitPreference: FitPreference,
   dataRegion: z.string(),
   createdAt: IsoDateTime,
 });
@@ -65,6 +74,7 @@ export const UpdateProfileRequest = z
     weightKg: z.number().min(20).max(400),
     birthYear: z.number().int().min(1900).max(new Date().getFullYear()),
     sexAtBirth: SexAtBirth,
+    fitPreference: FitPreference,
   })
   .partial();
 export type UpdateProfileRequest = z.infer<typeof UpdateProfileRequest>;
@@ -170,6 +180,8 @@ export const CreateUploadRequest = z.object({
    * video, which cannot be flipped there without re-encoding.
    */
   mirrored: z.boolean().default(false),
+  /** Four-view scan: which photo this is. Its presence selects the scan path. */
+  view: ScanView.optional(),
   partSizeBytes: z
     .number()
     .int()
@@ -255,6 +267,8 @@ export const Job = z.object({
   result: z
     .object({ bodyCoreId: Uuid, renderId: Uuid })
     .nullable(),
+  /** Four-view scan: per-view quality, issues and measurements. */
+  scanReport: z.lazy(() => ScanReport).nullable().optional(),
 });
 export type Job = z.infer<typeof Job>;
 
@@ -388,3 +402,193 @@ export const JobEvent = z.discriminatedUnion('event', [
   z.object({ event: z.literal('heartbeat'), at: IsoDateTime }),
 ]);
 export type JobEvent = z.infer<typeof JobEvent>;
+
+// ─────────────────────────── Measurements (derived from BodyCore) ──────────
+
+/** Where a measurement sits on the body, for the app's highlight overlay.
+ * Fractions of stature from the ground (0=feet, 1=head). */
+export const MeasurementRegion = z.object({
+  value: z.number(),
+  unit: z.literal('cm'),
+  kind: z.enum(['girth', 'width', 'length']),
+  y: z.number().nullable().optional(),
+  y0: z.number().nullable().optional(),
+  y1: z.number().nullable().optional(),
+  side: z.enum(['torso', 'arm', 'leg', 'full']),
+});
+export type MeasurementRegion = z.infer<typeof MeasurementRegion>;
+
+/**
+ * The 14 anthropometric measurements for the current BodyCore, with the region
+ * map that drives the highlight UI. `estimated` and `confidence` are always
+ * present: a measurement is never shown to a user as a bare, authoritative
+ * number — its uncertainty travels with it.
+ */
+export const MeasurementsResponse = z.object({
+  bodyCoreId: Uuid,
+  estimated: z.boolean(),
+  confidence: z.number().min(0).max(1).nullable(),
+  scaleSource: ScaleSource,
+  heightCm: z.number().nullable(),
+  measurements: z.record(z.string(), z.number().nullable()),
+  regions: z.record(z.string(), MeasurementRegion),
+  /** Four-view scans: the full record per measurement, in display order. */
+  details: z.array(z.lazy(() => MeasurementDetail)).optional(),
+  engineVersion: z.string().nullable().optional(),
+});
+export type MeasurementsResponse = z.infer<typeof MeasurementsResponse>;
+
+// ─────────────────────────── Four-view scan ───────────────────────────
+
+export const ScanIssue = z.object({
+  view: ScanView,
+  code: z.string(),
+  severity: z.enum(['error', 'warning']),
+  message: z.string(),
+});
+export type ScanIssue = z.infer<typeof ScanIssue>;
+
+export const ScanViewQuality = z.object({
+  view: ScanView,
+  ok: z.boolean(),
+  score: z.number().min(0).max(1),
+  issues: z.array(ScanIssue.omit({ view: true })),
+  metrics: z.record(z.string(), z.unknown()),
+});
+export type ScanViewQuality = z.infer<typeof ScanViewQuality>;
+
+export const MeasurementDetail = z.object({
+  name: z.string(),
+  label: z.string(),
+  value: z.number(),
+  unit: z.literal('cm'),
+  confidence: z.number().min(0).max(1),
+  method: z.string(),
+  sources: z.array(z.string()),
+  kind: z.enum(['girth', 'width', 'length']),
+  region: z.record(z.string(), z.unknown()),
+  typicalErrorCm: z.number().nullable(),
+});
+export type MeasurementDetail = z.infer<typeof MeasurementDetail>;
+
+export const ScanReport = z.object({
+  status: z.enum(['accepted', 'rejected']),
+  engineVersion: z.string(),
+  views: z.array(ScanViewQuality),
+  issues: z.array(ScanIssue),
+  measurements: z.array(MeasurementDetail),
+  confidence: z.object({
+    overall: z.number(),
+    scanQuality: z.number().optional(),
+    label: z.enum(['high', 'medium', 'low']).optional(),
+  }),
+  body: z
+    .object({
+      shape: z.array(z.number()),
+      metricScale: z.number(),
+      residualCm: z.record(z.string(), z.number()),
+      iterations: z.number().int(),
+      elapsedMs: z.number().int(),
+    })
+    .nullable(),
+  elapsedMs: z.number().int(),
+});
+export type ScanReport = z.infer<typeof ScanReport>;
+
+// ─────────────────────────── Catalogue & fit ───────────────────────────
+
+export const GarmentCategory = z.enum(['TOPS', 'OUTERWEAR', 'BOTTOMS', 'DRESSES']);
+export type GarmentCategory = z.infer<typeof GarmentCategory>;
+
+export const Brand = z.object({
+  id: Uuid,
+  slug: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  accentHex: z.string(),
+});
+export type Brand = z.infer<typeof Brand>;
+
+export const GarmentSummary = z.object({
+  id: Uuid,
+  slug: z.string(),
+  name: z.string(),
+  brand: Brand,
+  category: GarmentCategory,
+  subcategory: z.string(),
+  gender: z.string(),
+  fitIntent: z.enum(['SLIM', 'REGULAR', 'RELAXED', 'OVERSIZED']),
+  stretch: z.enum(['NONE', 'LOW', 'MEDIUM', 'HIGH']),
+  material: z.string(),
+  priceCents: z.number().int(),
+  currency: z.string(),
+  colorName: z.string(),
+  colorHex: z.string(),
+});
+export type GarmentSummary = z.infer<typeof GarmentSummary>;
+
+export const SizeChartView = z.object({
+  name: z.string(),
+  dimensions: z.array(z.string()),
+  sizes: z.array(
+    z.object({
+      label: z.string(),
+      measurements: z.record(z.string(), z.tuple([z.number(), z.number()])),
+    }),
+  ),
+});
+export type SizeChartView = z.infer<typeof SizeChartView>;
+
+export const GarmentDetail = GarmentSummary.extend({
+  description: z.string(),
+  sizeChart: SizeChartView,
+});
+export type GarmentDetail = z.infer<typeof GarmentDetail>;
+
+export const RecommendRequest = z.object({
+  /** Overrides the profile's fit preference for this one recommendation. */
+  preference: FitPreference.optional(),
+});
+export type RecommendRequest = z.infer<typeof RecommendRequest>;
+
+export const FitDimension = z.object({
+  name: z.string(),
+  label: z.string(),
+  body: z.number(),
+  range: z.tuple([z.number(), z.number()]),
+  weight: z.number(),
+  score: z.number(),
+  verdict: z.string(),
+  roomCm: z.number(),
+});
+export type FitDimension = z.infer<typeof FitDimension>;
+
+export const RecommendationView = z.object({
+  id: Uuid,
+  garment: GarmentSummary,
+  bodyCoreId: Uuid,
+  recommendedSize: z.string(),
+  alternativeSize: z.string().nullable(),
+  fitScore: z.number().int(),
+  fitLabel: z.string(),
+  betweenSizes: z.boolean(),
+  confidence: z.object({ value: z.number(), label: z.string() }),
+  preference: FitPreference,
+  dimensions: z.array(FitDimension),
+  sizes: z.array(z.object({ label: z.string(), score: z.number() })),
+  explanation: z.string(),
+  engineVersion: z.string(),
+  createdAt: IsoDateTime,
+  feedback: z
+    .object({ outcome: z.string(), sizeChosen: z.string(), createdAt: IsoDateTime })
+    .nullable(),
+});
+export type RecommendationView = z.infer<typeof RecommendationView>;
+
+export const FitFeedbackRequest = z.object({
+  sizeChosen: z.string().min(1).max(20),
+  outcome: z.enum(['PERFECT', 'TOO_SMALL', 'TOO_LARGE', 'KEPT', 'RETURNED']),
+  comment: z.string().max(500).optional(),
+});
+export type FitFeedbackRequest = z.infer<typeof FitFeedbackRequest>;
+

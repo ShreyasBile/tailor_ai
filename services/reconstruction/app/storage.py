@@ -42,8 +42,20 @@ def put_bytes(url: str, data: bytes, content_type: str) -> None:
 
 
 def fetch_image(url: str) -> np.ndarray:
-    """Fetch and decode to BGR uint8 (OpenCV convention)."""
-    raw = fetch_bytes(url)
+    """Fetch and decode to BGR uint8 (OpenCV convention).
+
+    Also accepts `data:` URIs, so callers without object storage (the
+    /process-scan contract, local tools) can pass images inline.
+    """
+    if url.startswith("data:"):
+        import base64  # noqa: PLC0415
+
+        try:
+            raw = base64.b64decode(url.split(",", 1)[1])
+        except (IndexError, ValueError) as exc:
+            raise storage_error(f"bad data URI: {exc}") from exc
+    else:
+        raw = fetch_bytes(url)
     buf = np.frombuffer(raw, dtype=np.uint8)
     img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
     if img is None:

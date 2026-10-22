@@ -36,6 +36,24 @@ const s1Validate: Stage = {
       }
     }
 
+    // Four-view scan: every source photo carries its view label. All four
+    // present (and nothing else) selects the scan path.
+    if (session.mode === 'PHOTO_SET') {
+      const views: NonNullable<typeof ctx.state.scanViews> = {};
+      for (const a of sources) {
+        const view = (a.metadata as { view?: string } | null)?.view;
+        if (view === 'front' || view === 'back' || view === 'left' || view === 'right') {
+          views[view] = a.id;
+        }
+      }
+      if (Object.keys(views).length > 0) {
+        ctx.state.scanViews = views;
+        // Height is the scan's only scale anchor — without it every
+        // measurement is a guess, so refuse rather than guess.
+        if (session.user.heightCm == null) throw new AppError('HEIGHT_REQUIRED');
+      }
+    }
+
     // Height anchors metric scale (S7). Captured here so S7 has it regardless
     // of what the user edited between capture and processing.
     ctx.state.userHeightCm = session.user.heightCm;
@@ -119,6 +137,23 @@ const s3Select: Stage = {
   name: 'S3_SELECT',
   retry: TRANSIENT_RETRY,
   async run(ctx) {
+    // Four-view scan: the four photos are the frames, in a fixed order. No
+    // frame selection — each view is needed, and S3B judges their quality.
+    if (ctx.state.scanViews) {
+      const order = ['front', 'right', 'back', 'left'] as const;
+      const ids = order.map((v) => ctx.state.scanViews![v]).filter((x): x is string => !!x);
+      const photos = await ctx.prisma.asset.findMany({ where: { id: { in: ids } } });
+      const byId = new Map(photos.map((p) => [p.id, p]));
+      const frames = ids.map((id, i) => {
+        const p = byId.get(id)!;
+        return { index: i, key: p.storageKey, width: p.width ?? 0, height: p.height ?? 0 };
+      });
+      ctx.state.extractedFrames = frames;
+      ctx.state.selectedFrames = frames.map((f) => ({ index: f.index, key: f.key, qualityScore: 1 }));
+      ctx.log.info('Four-view scan frames', { views: ids.length });
+      return;
+    }
+
     // Photo mode: the uploads themselves are the candidates.
     if (ctx.state.mode === 'PHOTO_SET' && ctx.state.extractedFrames.length === 0) {
       const photos = await ctx.prisma.asset.findMany({
@@ -165,6 +200,56 @@ const s3Select: Stage = {
     ctx.log.info('Selected frames', {
       candidates: res.frames.length,
       selected: selected.length,
+    });
+  },
+};
+
+// ─────────────────────────── S3B · Four-view scan ───────────────────────────
+
+const s3bScan: Stage = {
+  name: 'S3B_SCAN_ANALYZE',
+  retry: TRANSIENT_RETRY,
+  skipIf: (ctx) => ctx.state.scanViews === null,
+  async run(ctx) {
+    const views = ctx.state.scanViews!;
+    const assets = await ctx.prisma.asset.findMany({
+      where: { id: { in: Object.values(views) } },
+    });
+    const byId = new Map(assets.map((a) => [a.id, a]));
+
+    const report = await ctx.gpu.scanAnalyze({
+      jobId: ctx.jobId,
+      heightCm: ctx.state.userHeightCm!,
+      views: await Promise.all(
+        (Object.entries(views) as Array<['front' | 'back' | 'left' | 'right', string]>).map(
+          async ([view, id]) => ({
+            view,
+            imageUrl: await ctx.storage.presignGet(byId.get(id)!.storageKey, PRESIGN_TTL),
+          }),
+        ),
+      ),
+      fitBody: true,
+    });
+
+    // Saved whether accepted or not: on rejection it is how the app tells the
+    // user which photo to retake, and why.
+    await ctx.prisma.reconstructionJob.update({
+      where: { id: ctx.jobId },
+      data: { scanReport: report as object },
+    });
+
+    if (report.status === 'rejected') {
+      const errors = report.issues.filter((i) => i.severity === 'error');
+      ctx.log.warn('Scan rejected', { issues: errors.map((i) => `${i.view}:${i.code}`) });
+      throw new AppError('SCAN_REJECTED', { issues: errors.length });
+    }
+
+    ctx.state.scan = report;
+    ctx.log.info('Scan analysed', {
+      measurements: report.measurements.length,
+      confidence: report.confidence.overall,
+      fitResidual: report.body?.residualCm,
+      elapsedMs: report.elapsedMs,
     });
   },
 };
@@ -247,6 +332,21 @@ const s6Fuse: Stage = {
     ctx.state.scale = res.scale;
     ctx.state.coverageDegrees = res.coverageDegrees;
     ctx.state.overallQuality = res.overallQuality;
+
+    // Four-view scan: the body is fitted to the *measured* girths, and scale
+    // is the user's height exactly — both supersede the per-frame estimates.
+    const body = ctx.state.scan?.body;
+    if (body) {
+      ctx.state.shape = body.shape;
+      ctx.state.scale = {
+        source: 'USER_HEIGHT',
+        heightCm: ctx.state.userHeightCm,
+        confidence: 0.95,
+        metricScale: body.metricScale,
+      };
+      ctx.state.coverageDegrees = 360;
+      ctx.state.overallQuality = ctx.state.scan!.confidence.overall;
+    }
 
     ctx.log.info('Fused shape', {
       outlierFrames: res.outlierFrames.length,
@@ -490,6 +590,7 @@ export const STAGES = [
   s1Validate,
   s2Extract,
   s3Select,
+  s3bScan,
   s4Segment,
   s5Body,
   s6Fuse,

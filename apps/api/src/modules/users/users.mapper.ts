@@ -16,6 +16,7 @@ export function toUserProfile(user: User): UserProfile {
     weightKg: user.weightKg,
     birthYear: user.birthYear,
     sexAtBirth: user.sexAtBirth,
+    fitPreference: user.fitPreference,
     dataRegion: user.dataRegion,
     createdAt: user.createdAt.toISOString(),
   };

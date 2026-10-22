@@ -1,5 +1,5 @@
 import { PipeTransform, Injectable, ArgumentMetadata } from '@nestjs/common';
-import { ZodSchema, ZodError } from 'zod';
+import type { ZodSchema } from 'zod';
 import { AppError } from '@tailorai/contracts';
 
 /**
@@ -14,25 +14,23 @@ export class ZodValidationPipe implements PipeTransform {
   constructor(private readonly schema: ZodSchema) {}
 
   transform(value: unknown, _metadata: ArgumentMetadata): unknown {
-    try {
-      return this.schema.parse(value);
-    } catch (err) {
-      if (err instanceof ZodError) {
-        throw new AppError(
-          'VALIDATION_FAILED',
-          {
-            issues: err.issues.map((i) => ({
-              path: i.path.join('.'),
-              message: i.message,
-            })),
-          },
-          err.issues
-            .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
-            .join('; '),
-        );
-      }
-      throw err;
-    }
+    // safeParse, not parse + `instanceof ZodError`: the schemas come from the
+    // ESM contracts package while this file loads zod's CJS build, so the two
+    // ZodError classes differ and instanceof is always false (every invalid
+    // body became a 500).
+    const result = this.schema.safeParse(value);
+    if (result.success) return result.data;
+    const { issues } = result.error;
+    throw new AppError(
+      'VALIDATION_FAILED',
+      {
+        issues: issues.map((i) => ({
+          path: i.path.join('.'),
+          message: i.message,
+        })),
+      },
+      issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
+    );
   }
 }
 

@@ -14,6 +14,8 @@ import 'ui/screens/capture_review.dart';
 import 'ui/screens/processing.dart';
 import 'ui/screens/viewer.dart';
 import 'ui/screens/profile.dart';
+import 'ui/screens/measurements.dart';
+import 'ui/screens/ar_measure.dart';
 
 class TailorApp extends StatelessWidget {
   const TailorApp({super.key});
@@ -36,17 +38,19 @@ class TailorApp extends StatelessWidget {
       // Rebuild redirects whenever session state changes (sign-in, consent).
       refreshListenable: session,
       redirect: (context, state) {
-        if (!session.hydrated) return state.matchedLocation == '/' ? null : '/';
         final loc = state.matchedLocation;
-        final authArea = loc == '/sign-in' || loc == '/consent' || loc == '/';
 
-        if (!session.isAuthed) return authArea && loc != '/consent' ? null : '/sign-in';
+        // Still hydrating → hold on the splash ('/').
+        if (!session.hydrated) return loc == '/' ? null : '/';
+
+        // Not signed in → sign-in (the splash '/' must leave here too).
+        if (!session.isAuthed) return loc == '/sign-in' ? null : '/sign-in';
 
         // Consent is a hard gate — the API refuses jobs without it.
         if (session.needsConsent) return loc == '/consent' ? null : '/consent';
 
-        // Signed in and consented: bounce out of the auth area.
-        if (loc == '/sign-in' || loc == '/consent' || loc == '/') return '/home';
+        // Signed in and consented: bounce out of splash / auth screens.
+        if (loc == '/' || loc == '/sign-in' || loc == '/consent') return '/home';
         return null;
       },
       routes: [
@@ -55,6 +59,8 @@ class TailorApp extends StatelessWidget {
         GoRoute(path: '/consent', builder: (_, __) => const ConsentScreen()),
         GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
         GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
+        GoRoute(path: '/measurements', builder: (_, __) => const MeasurementsScreen()),
+        GoRoute(path: '/measurements/ar', builder: (_, __) => const ArMeasureScreen()),
         GoRoute(
             path: '/capture', builder: (_, __) => const CaptureIntroScreen()),
         GoRoute(

@@ -30,7 +30,7 @@
       "license": "SAM License",
       "licenseUrl": "https://github.com/facebookresearch/sam-3d-body/blob/main/LICENSE",
       "commercial_ok": true,
-      "commercialNote": "Same grant as ViT-H. Higher accuracy, tighter fit in 8 GB.",
+      "commercialNote": "Commercial OK. Uses the DINOv3 backbone, which carries its own DINOv3 License (also commercial, no MAU cap) REQUIRING a visible 'Built with DINOv3' attribution in the product. Ship both licenses. Verified 2026-09-08.",
       "source_url": "https://huggingface.co/facebook/sam-3d-body-dinov3",
       "bodyModel": "MHR",
       "approxWeightsGb": 1.7,

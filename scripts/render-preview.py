@@ -70,8 +70,8 @@ def render(mesh: trimesh.Trimesh, yaw_deg: float, size: int) -> np.ndarray:
 
 
 def main() -> None:
-    src = Path(sys.argv[1] if len(sys.argv) > 1 else "D:/tailorai/.data/smoke-avatar.glb")
-    out = Path(sys.argv[2] if len(sys.argv) > 2 else "D:/tailorai/.data/avatar-preview.png")
+    src = Path(sys.argv[1] if len(sys.argv) > 1 else str(Path(__file__).resolve().parents[1] / ".data") + "/smoke-avatar.glb")
+    out = Path(sys.argv[2] if len(sys.argv) > 2 else str(Path(__file__).resolve().parents[1] / ".data") + "/avatar-preview.png")
 
     data = src.read_bytes()
     mesh = trimesh.load(io.BytesIO(data), file_type="glb", force="mesh")

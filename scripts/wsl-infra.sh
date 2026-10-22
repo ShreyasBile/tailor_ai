@@ -6,7 +6,7 @@
 # here are reachable from Windows on 127.0.0.1 exactly as the compose stack
 # would be. Same ports, same credentials, so no application config changes.
 #
-#   wsl -u root -- bash /mnt/d/tailorai/scripts/wsl-infra.sh up|down|status
+#   wsl -u root -- bash scripts/wsl-infra.sh   (from the repo root) up|down|status
 
 set -uo pipefail
 
@@ -16,7 +16,7 @@ PG_DB="tailorai"
 PG_VERSION="16"
 
 # Data lives on D: alongside everything else — C: is short on space.
-DATA_ROOT="/mnt/d/tailorai/.data"
+DATA_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.data"
 MINIO_DATA="${DATA_ROOT}/minio"
 MINIO_USER="tailorai"
 MINIO_PASS="tailorai_dev_secret"
@@ -139,6 +139,11 @@ case "${1:-up}" in
     ;;
   down)
     pg_ctlcluster "$PG_VERSION" main stop 2>/dev/null || true
+    # Ubuntu's redis package runs it under systemd with Restart=always, so a
+    # bare `redis-cli shutdown` is undone at once. Stop the unit when there is one.
+    if systemctl is-active --quiet redis-server 2>/dev/null; then
+      systemctl stop redis-server 2>/dev/null || true
+    fi
     redis-cli shutdown nosave 2>/dev/null || true
     pkill -x minio 2>/dev/null || true
     pkill -f tailorai-keepalive 2>/dev/null || true

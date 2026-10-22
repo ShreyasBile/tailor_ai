@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Weights are never committed. They land in $env:WEIGHTS_DIR (default
-    D:\tailorai\.data\weights) — deliberately on D:, because C: has limited
+    <repo>\.data\weights) — deliberately on D:, because C: has limited
     free space and the full set is several GB.
 
     Only commercially-licensed models are downloaded. Research-tier models
@@ -17,7 +17,7 @@
 #>
 
 param(
-    [string]$WeightsDir = $(if ($env:WEIGHTS_DIR) { $env:WEIGHTS_DIR } else { "D:\tailorai\.data\weights" }),
+    [string]$WeightsDir = $(if ($env:WEIGHTS_DIR) { $env:WEIGHTS_DIR } else { "$(Split-Path -Parent $PSScriptRoot)\.data\weights" }),
     [switch]$SkipBody,
     [switch]$SkipSegmentation
 )
@@ -41,7 +41,7 @@ if ($freeGb -lt 12) {
 
 # huggingface-cli ships with the `huggingface_hub` package and handles resume,
 # which matters for multi-GB downloads on a home connection.
-$venvPython = "D:\tailorai\services\reconstruction\.venv\Scripts\python.exe"
+$venvPython = "$(Split-Path -Parent $PSScriptRoot)\services\reconstruction\.venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Error "Python venv not found. Run: cd services\reconstruction; python3 -m venv .venv"
 }

@@ -22,6 +22,7 @@ export const ErrorCode = z.enum([
   'VIDEO_TOO_SHORT',
   'CORRUPT_MEDIA',
   'NUDITY_DETECTED',
+  'SCAN_REJECTED',
 
   // ── Resolution problems ──
   'SCALE_UNRESOLVED',
@@ -105,6 +106,11 @@ export const ERROR_CATALOG: Record<ErrorCode, ErrorSpec> = {
   UNSUPPORTED_FORMAT: {
     status: 415,
     message: "That file type isn't supported. Please use a photo or video from your camera.",
+    retryable: false,
+  },
+  SCAN_REJECTED: {
+    status: 422,
+    message: 'Some of your photos need retaking. Check the note on each photo, then scan again.',
     retryable: false,
   },
   FILE_TOO_LARGE: { status: 413, message: 'That file is too large. Try a shorter video.', retryable: false },

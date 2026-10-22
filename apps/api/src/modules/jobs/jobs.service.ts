@@ -231,6 +231,7 @@ export class JobsService {
       estimatedSecondsRemaining: this.estimateRemaining(job, stages),
       result:
         bodyCoreId && renderId ? { bodyCoreId, renderId } : null,
+      scanReport: (job.scanReport as Job['scanReport']) ?? null,
     };
   }
 

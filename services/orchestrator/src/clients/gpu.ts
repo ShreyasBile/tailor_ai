@@ -1,5 +1,6 @@
 import { AppError } from '@tailorai/contracts';
 import type {
+  ScanReport,
   BodyInferRequest,
   BodyInferResponse,
   FuseRequest,
@@ -52,6 +53,13 @@ export interface ExtractResponse {
   durationMs: number;
   fps: number;
   elapsedMs: number;
+}
+
+export interface ScanAnalyzeRequest {
+  jobId: string;
+  heightCm: number;
+  views: Array<{ view: 'front' | 'back' | 'left' | 'right'; imageUrl: string }>;
+  fitBody: boolean;
 }
 
 export interface SelectRequest {
@@ -139,6 +147,12 @@ export class GpuClient {
 
   texture(req: TextureRequest): Promise<TextureResponse> {
     return this.request('POST', '/infer/texture', req);
+  }
+
+  /** Four-view scan: validate, measure, fit. A rejected scan is a normal
+   * response (status: 'rejected'), not an HTTP error. */
+  scanAnalyze(req: ScanAnalyzeRequest): Promise<ScanReport> {
+    return this.request('POST', '/scan/analyze', req);
   }
 
   buildMesh(req: BuildMeshRequest): Promise<BuildMeshResponse> {

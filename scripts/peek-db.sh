@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Quick read-only look at recent activity. Diagnostic aid, not part of the app.
-#   wsl -u root -- bash /mnt/d/tailorai/scripts/peek-db.sh
+#   wsl -u root -- bash scripts/peek-db.sh   (from the repo root)
 set -uo pipefail
 
 q() { su postgres -c "psql -d tailorai -t -A -F'|' -c \"$1\""; }

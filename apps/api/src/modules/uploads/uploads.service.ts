@@ -114,6 +114,7 @@ export class UploadsService {
         sizeBytes: BigInt(req.sizeBytes),
         sha256: req.clientFingerprint,
         mirrored: req.mirrored,
+        view: req.view ?? null,
         partSizeBytes: req.partSizeBytes,
         totalParts,
         expiresAt: new Date(Date.now() + this.env.UPLOAD_URL_TTL * 1000),
@@ -207,6 +208,8 @@ export class UploadsService {
           sizeBytes: upload.sizeBytes,
           sha256: upload.sha256,
           mirrored: upload.mirrored,
+          // The pipeline reads the four-view label from here (S1).
+          ...(upload.view ? { metadata: { view: upload.view } } : {}),
           expiresAt: new Date(Date.now() + this.env.RAW_MEDIA_TTL_DAYS * 86_400_000),
         },
       });

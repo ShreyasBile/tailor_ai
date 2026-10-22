@@ -26,6 +26,12 @@ from .media.select import select_frames
 from .mesh.build import build_mesh
 from .runtime.vram import gpu_info
 from .schemas import (
+    FitRecommendRequest,
+    ProcessScanRequest,
+    ScanAnalyzeRequest,
+    MeasureRequest,
+    MeasureResponse,
+    MeasurementRegion,
     AdapterInfo,
     BodyInferRequest,
     BodyInferResponse,
@@ -80,8 +86,11 @@ async def lifespan(app: FastAPI):
     try:
         _state["body"].warmup()  # type: ignore[union-attr]
         _state["seg"].warmup()  # type: ignore[union-attr]
+        from .scan import pose as scan_pose
+
+        scan_pose.warmup()
         _state["ready"] = True
-        log.info("adapters warm")
+        log.info("adapters warm (incl. scan pose model)")
     except Exception as exc:  # noqa: BLE001
         _state["ready"] = False
         log.error("warmup failed: %s", exc)
@@ -251,6 +260,83 @@ async def infer_texture(req: TextureRequest) -> TextureResponse:
 @app.post("/mesh/build", response_model=BuildMeshResponse, dependencies=[Depends(require_api_key)])
 async def mesh_build(req: BuildMeshRequest) -> BuildMeshResponse:
     return build_mesh(req)
+
+
+# ─────────────────────────── measurement plane ───────────────────────────
+
+
+@app.post("/measure", response_model=MeasureResponse, dependencies=[Depends(require_api_key)])
+async def measure(req: MeasureRequest) -> MeasureResponse:
+    """Derive the 14 anthropometric measurements + their body regions from a
+    shape vector. Pure geometry — no GPU, no I/O — so the API can call it
+    per request to serve a user's measurements."""
+    import time as _t
+
+    from .bodymodel.humanoid import build as _build
+    from .research import measurements as _M
+
+    started = _t.perf_counter()
+    mesh, mesh_info = _build(req.shape, metric_scale=req.metricScale, return_landmarks=True)
+    meas = _M.extract(mesh, mesh_info)
+    regions = {k: MeasurementRegion(**v) for k, v in _M.regions_for(meas).items()}
+    return MeasureResponse(
+        measurements=meas.to_dict(),
+        regions=regions,
+        elapsedMs=int((_t.perf_counter() - started) * 1000),
+    )
+
+
+# ─────────────────────────── scan + fit (MVP) ───────────────────────────
+#
+# Plain `def` (not async): MediaPipe and mesh fitting are CPU-bound, so FastAPI
+# runs these in its threadpool instead of blocking the event loop.
+
+
+@app.post("/scan/analyze", dependencies=[Depends(require_api_key)])
+def scan_analyze(req: ScanAnalyzeRequest) -> dict:
+    """Validate four views, measure, and fit the body. Never raises for a bad
+    scan: a rejected scan is a normal result carrying user-facing issues."""
+    from .scan.analyze import analyze
+
+    images = {v.view: fetch_image(v.imageUrl) for v in req.views}
+    return analyze(images, req.heightCm, fit_body=req.fitBody)
+
+
+@app.post("/fit/recommend", dependencies=[Depends(require_api_key)])
+def fit_recommend(req: FitRecommendRequest) -> dict:
+    from .fit.engine import recommend
+
+    try:
+        return recommend(
+            req.body,
+            req.garment.model_dump(),
+            [r.model_dump() for r in req.sizeChart],
+            req.preference,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "FIT_UNAVAILABLE", "message": str(exc)}) from exc
+
+
+@app.post("/process-scan", dependencies=[Depends(require_api_key)])
+def process_scan(req: ProcessScanRequest) -> dict:
+    """The MVP plan's interface contract (§7), for direct callers. The product
+    path goes through the orchestrator, which also builds and stores the GLB."""
+    from .scan.analyze import analyze
+
+    images = {k: fetch_image(v) for k, v in req.images.model_dump().items()}
+    res = analyze(images, req.height_cm)
+    return {
+        "scan_id": req.scan_id,
+        "status": "completed" if res["status"] == "accepted" else "rejected",
+        "body_model": (
+            {"format": "parametric", "shape": res["body"]["shape"],
+             "metric_scale": res["body"]["metricScale"], "mesh_url": None}
+            if res.get("body") else None
+        ),
+        "measurements": {f"{m['name']}_cm": m["value"] for m in res["measurements"]},
+        "confidence": {"overall": res["confidence"]["overall"]},
+        "issues": res["issues"],
+    }
 
 
 def main() -> None:

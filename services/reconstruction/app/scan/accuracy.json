@@ -1,0 +1,85 @@
+{
+  "dataset": "BodyM testA (front + left silhouettes, tape-measured ground truth)",
+  "date": "2026-10-09",
+  "subjects": 87,
+  "failed": 0,
+  "poseOnSilhouettes": true,
+  "views": "2 of 4 (front, left) \u2014 BodyM has no back/right views",
+  "measurements": {
+    "chest": {
+      "n": 87,
+      "mae_cm": 5.23,
+      "median_abs_cm": 3.83,
+      "bias_cm": -0.86,
+      "within_2cm": 0.333,
+      "within_4cm": 0.506
+    },
+    "waist": {
+      "n": 87,
+      "mae_cm": 3.27,
+      "median_abs_cm": 1.89,
+      "bias_cm": -0.32,
+      "within_2cm": 0.517,
+      "within_4cm": 0.701
+    },
+    "hip": {
+      "n": 87,
+      "mae_cm": 3.31,
+      "median_abs_cm": 2.45,
+      "bias_cm": 0.64,
+      "within_2cm": 0.402,
+      "within_4cm": 0.724
+    },
+    "thigh": {
+      "n": 87,
+      "mae_cm": 5.89,
+      "median_abs_cm": 5.16,
+      "bias_cm": -2.2,
+      "within_2cm": 0.207,
+      "within_4cm": 0.333
+    },
+    "calf": {
+      "n": 87,
+      "mae_cm": 1.95,
+      "median_abs_cm": 1.97,
+      "bias_cm": -1.28,
+      "within_2cm": 0.529,
+      "within_4cm": 0.943
+    },
+    "shoulder_width": {
+      "n": 87,
+      "mae_cm": 3.31,
+      "median_abs_cm": 3.25,
+      "bias_cm": 3.03,
+      "within_2cm": 0.172,
+      "within_4cm": 0.701
+    },
+    "arm_length": {
+      "n": 87,
+      "mae_cm": 3.56,
+      "median_abs_cm": 3.22,
+      "bias_cm": 3.37,
+      "within_2cm": 0.218,
+      "within_4cm": 0.678
+    },
+    "inseam": {
+      "n": 87,
+      "mae_cm": 2.59,
+      "median_abs_cm": 2.1,
+      "bias_cm": 0.91,
+      "within_2cm": 0.483,
+      "within_4cm": 0.828
+    }
+  },
+  "notComparable": {
+    "torso_length": {
+      "n": 87,
+      "mae_cm": 9.58,
+      "median_abs_cm": 9.75,
+      "bias_cm": 9.05,
+      "within_2cm": 0.046,
+      "within_4cm": 0.057,
+      "reason": "BodyM shoulder-to-crotch uses a different shoulder landmark"
+    }
+  }
+}

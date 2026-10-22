@@ -7,6 +7,9 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# services/reconstruction/app/config.py -> <repo>/.data
+_DATA_ROOT = Path(__file__).resolve().parents[3] / ".data"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -32,7 +35,7 @@ class Settings(BaseSettings):
     # production refuses to load models marked commercial_ok:false (ADR-2)
     model_tier: str = "production"
 
-    weights_dir: Path = Path("D:/tailorai/.data/weights")
+    weights_dir: Path = _DATA_ROOT / "weights"
     texture_resolution: int = 2048
     target_frame_count: int = 16
 
@@ -70,7 +73,7 @@ def settings() -> Settings:
         body_adapter=os.getenv("RECONSTRUCTION_ADAPTER", "mock"),
         segmentation_adapter=os.getenv("SEGMENTATION_ADAPTER", "mock"),
         model_tier=os.getenv("MODEL_TIER", "production"),
-        weights_dir=Path(os.getenv("WEIGHTS_DIR", "D:/tailorai/.data/weights")),
+        weights_dir=Path(os.getenv("WEIGHTS_DIR", str(_DATA_ROOT / "weights"))),
         texture_resolution=int(os.getenv("TEXTURE_RESOLUTION", "2048")),
         target_frame_count=int(os.getenv("TARGET_FRAME_COUNT", "16")),
     )

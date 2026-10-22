@@ -9,7 +9,7 @@
 class Config {
   static const apiBase = String.fromEnvironment(
     'API_BASE',
-    defaultValue: 'http://192.168.1.10:3000',
+    defaultValue: 'http://192.168.0.108:3000',
   );
 
   static String get apiV1 => '$apiBase/v1';

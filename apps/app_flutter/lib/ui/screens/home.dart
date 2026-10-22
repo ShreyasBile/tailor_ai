@@ -132,6 +132,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     onPressed: () => context.push('/capture'),
                   ),
                 ),
+                if (hasAvatar) ...[
+                  const SizedBox(height: T.sm),
+                  Reveal(
+                    delay: const Duration(milliseconds: 260),
+                    child: SoftButton(
+                      'My measurements',
+                      icon: Icons.straighten,
+                      onPressed: () => context.push('/measurements'),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: T.md),
                 Center(
                   child: Text(

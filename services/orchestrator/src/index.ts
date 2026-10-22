@@ -174,6 +174,22 @@ async function persistResults(
       },
     });
 
+    if (state.scan) {
+      await tx.bodyMeasurement.createMany({
+        data: state.scan.measurements.map((m) => ({
+          bodyCoreId: core.id,
+          name: m.name,
+          valueCm: m.value,
+          confidence: m.confidence,
+          typicalErrorCm: m.typicalErrorCm,
+          method: m.method,
+          sources: m.sources,
+          region: m.region as object,
+          engineVersion: state.scan!.engineVersion,
+        })),
+      });
+    }
+
     const assets = await createAssets(tx, ctx);
 
     const render = await tx.avatarRender.create({
@@ -193,6 +209,20 @@ async function persistResults(
       },
     });
 
+    // S12 already wrote the OBJ archive; record it as the render's OBJ_ZIP
+    // export so the API can serve it (it only reuses existing OBJ exports —
+    // without this row OBJ download always failed).
+    if (assets.obj) {
+      await tx.export.create({
+        data: {
+          renderId: render.id,
+          format: 'OBJ_ZIP',
+          assetId: assets.obj.id,
+          sizeBytes: assets.obj.sizeBytes,
+        },
+      });
+    }
+
     return { bodyCoreId: core.id, renderId: render.id };
   });
 }
@@ -202,7 +232,12 @@ type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
 async function createAssets(
   tx: Tx,
   ctx: StageContext,
-): Promise<{ glbId: string; thumbnailId: string | null; textureId: string | null }> {
+): Promise<{
+  glbId: string;
+  thumbnailId: string | null;
+  textureId: string | null;
+  obj: { id: string; sizeBytes: bigint } | null;
+}> {
   const { state } = ctx;
   const bucket = storage.bucket;
   const expiresAt = null;
@@ -255,7 +290,24 @@ async function createAssets(
     textureId = tex.id;
   }
 
-  return { glbId: glb.id, thumbnailId, textureId };
+  let obj: { id: string; sizeBytes: bigint } | null = null;
+  if (state.objKey && (await storage.exists(state.objKey))) {
+    const row = await tx.asset.create({
+      data: {
+        sessionId: ctx.sessionId,
+        kind: 'MESH_OBJ',
+        storageKey: state.objKey,
+        bucket,
+        mimeType: 'application/zip',
+        sizeBytes: BigInt(await storage.size(state.objKey)),
+        sha256: '',
+        expiresAt,
+      },
+    });
+    obj = { id: row.id, sizeBytes: row.sizeBytes };
+  }
+
+  return { glbId: glb.id, thumbnailId, textureId, obj };
 }
 
 // ─────────────────────────── bootstrap ───────────────────────────

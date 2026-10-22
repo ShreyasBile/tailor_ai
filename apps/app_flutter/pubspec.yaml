@@ -25,13 +25,15 @@ dependencies:
   # Capture — cached
   camera: ^0.10.6
   permission_handler: ^11.3.1  # 10.x uses removed v1 embedding
-  sensors_plus: ^4.0.2           # fetch: tilt check (small)
+  sensors_plus: ^7.1.1           # fetch: tilt check (small)
 
   # UX / brand — cached
   google_fonts: ^6.2.1
 
   # Routing — fetch (small)
   go_router: ^14.6.2
+
+  google_mlkit_pose_detection: ^0.14.0
 
   # 3D — fetch. Renders TEXTURED GLB via <model-viewer>. The reason for Flutter.
   model_viewer_plus: ^1.9.0
@@ -44,5 +46,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/
+  # No bundled assets yet. An `assets:` entry needs the folder to exist, and git
+  # doesn't track an empty one — a fresh clone failed `flutter build`.

@@ -14,7 +14,6 @@ the stack up:
 from __future__ import annotations
 
 import io
-import json
 import sys
 import time
 from pathlib import Path
@@ -22,6 +21,9 @@ from pathlib import Path
 import cv2
 import httpx
 import numpy as np
+
+# Windows consoles default to cp1252, which can't encode the ▸/✔ glyphs below.
+sys.stdout.reconfigure(encoding="utf-8")
 
 API = "http://127.0.0.1:3000/v1"
 
@@ -272,7 +274,7 @@ def main() -> None:
     elapsed = time.time() - started
 
     if final["status"] != "COMPLETED":
-        print(f"\n  stage detail:")
+        print("\n  stage detail:")
         for s in final["stages"]:
             mark = {"SUCCEEDED": "✔", "FAILED": "✘", "SKIPPED": "–", "DEGRADED": "~"}.get(s["status"], "?")
             print(f"    {mark} {s['name']:22s} {s['status']:10s} {s.get('errorCode') or ''}")
@@ -336,7 +338,7 @@ def main() -> None:
         die(f"downloaded file is not a GLB (magic {glb[:4]!r})")
     ok(f"GLB downloaded and verified: {len(glb) / 1024:.0f} KB, magic 'glTF'")
 
-    out = Path("D:/tailorai/.data/smoke-avatar.glb")
+    out = Path(__file__).resolve().parents[1] / ".data" / "smoke-avatar.glb"
     out.write_bytes(glb)
 
     try:

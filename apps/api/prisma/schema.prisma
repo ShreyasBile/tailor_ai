@@ -30,11 +30,15 @@ model User {
 
   dataRegion String @default("eu")
 
+  fitPreference FitPreference @default(REGULAR)
+
   consents        Consent[]
   captureSessions CaptureSession[]
   bodyCores       BodyCore[]
   jobs            ReconstructionJob[]
   refreshTokens   RefreshToken[]
+  recommendations Recommendation[]
+  fitFeedback     FitFeedback[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -190,6 +194,8 @@ model Upload {
   totalParts     Int
   completedParts Int[]     @default([])
   mirrored       Boolean   @default(false)
+  // Four-view scan: front | back | left | right. Copied to Asset.metadata.view.
+  view           String?
 
   isComplete  Boolean   @default(false)
   completedAt DateTime?
@@ -225,6 +231,10 @@ model ReconstructionJob {
 
   errorCode    String?
   errorMessage String?
+
+  // Four-view scan: per-view quality, issues and the measurement result. On a
+  // rejected scan this is what tells the user which photo to retake and why.
+  scanReport Json?
 
   queuedAt      DateTime  @default(now())
   startedAt     DateTime?
@@ -325,7 +335,9 @@ model BodyCore {
   overallQuality Float?
   coverageDegrees Float?
 
-  renders AvatarRender[]
+  renders         AvatarRender[]
+  measurements    BodyMeasurement[]
+  recommendations Recommendation[]
 
   createdAt    DateTime  @default(now())
   supersededAt DateTime?
@@ -398,4 +410,186 @@ enum ExportFormat {
   OBJ_ZIP
   USDZ
   FBX
+}
+
+
+// ─────────────────────────── Fit intelligence (MVP) ───────────────────────────
+
+enum FitPreference {
+  SNUG
+  REGULAR
+  LOOSE
+}
+
+/// One measurement of one body profile. Stored rather than derived so the
+/// profile keeps the numbers (and the confidence, and the engine that produced
+/// them) the user actually saw, even after the engine improves.
+model BodyMeasurement {
+  id         String   @id @default(uuid()) @db.Uuid
+  bodyCoreId String   @db.Uuid
+  bodyCore   BodyCore @relation(fields: [bodyCoreId], references: [id], onDelete: Cascade)
+
+  name           String
+  valueCm        Float
+  confidence     Float
+  typicalErrorCm Float?
+  method         String
+  sources        String[]
+  region         Json?
+  engineVersion  String
+
+  createdAt DateTime @default(now())
+
+  @@unique([bodyCoreId, name])
+}
+
+model Brand {
+  id          String  @id @default(uuid()) @db.Uuid
+  slug        String  @unique
+  name        String
+  description String?
+  accentHex   String  @default("#111111")
+
+  garments   Garment[]
+  sizeCharts SizeChart[]
+
+  createdAt DateTime @default(now())
+}
+
+enum GarmentCategory {
+  TOPS
+  OUTERWEAR
+  BOTTOMS
+  DRESSES
+}
+
+enum FitIntent {
+  SLIM
+  REGULAR
+  RELAXED
+  OVERSIZED
+}
+
+enum StretchLevel {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// A brand's published size chart: body-measurement ranges per size.
+model SizeChart {
+  id       String          @id @default(uuid()) @db.Uuid
+  brandId  String          @db.Uuid
+  brand    Brand           @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  name     String
+  category GarmentCategory
+
+  entries  SizeChartEntry[]
+  garments Garment[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([brandId, name])
+}
+
+model SizeChartEntry {
+  id          String    @id @default(uuid()) @db.Uuid
+  sizeChartId String    @db.Uuid
+  sizeChart   SizeChart @relation(fields: [sizeChartId], references: [id], onDelete: Cascade)
+
+  sizeLabel String
+  sortOrder Int
+  dimension String
+  minCm     Float
+  maxCm     Float
+
+  @@unique([sizeChartId, sizeLabel, dimension])
+  @@index([sizeChartId, sortOrder])
+}
+
+model Garment {
+  id          String    @id @default(uuid()) @db.Uuid
+  slug        String    @unique
+  brandId     String    @db.Uuid
+  brand       Brand     @relation(fields: [brandId], references: [id])
+  sizeChartId String    @db.Uuid
+  sizeChart   SizeChart @relation(fields: [sizeChartId], references: [id])
+
+  name        String
+  category    GarmentCategory
+  subcategory String
+  gender      String
+  fitIntent   FitIntent
+  stretch     StretchLevel
+  material    String
+  description String
+  priceCents  Int
+  currency    String  @default("USD")
+  colorName   String
+  colorHex    String
+  isActive    Boolean @default(true)
+
+  recommendations Recommendation[]
+  fitFeedback     FitFeedback[]
+
+  createdAt DateTime @default(now())
+
+  @@index([category, isActive])
+}
+
+/// Every recommendation shown, with the full engine output — the explanation
+/// the user read is reproducible, and outcomes can later be joined to it.
+model Recommendation {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  garmentId  String   @db.Uuid
+  garment    Garment  @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+  bodyCoreId String   @db.Uuid
+  bodyCore   BodyCore @relation(fields: [bodyCoreId], references: [id], onDelete: Cascade)
+
+  recommendedSize String
+  alternativeSize String?
+  fitScore        Int
+  confidence      Float
+  betweenSizes    Boolean
+  preference      FitPreference
+  result          Json
+  engineVersion   String
+
+  feedback FitFeedback[]
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([garmentId])
+}
+
+enum FitOutcome {
+  PERFECT
+  TOO_SMALL
+  TOO_LARGE
+  KEPT
+  RETURNED
+}
+
+/// Fit feedback / purchase outcome — the training signal for a learned fit
+/// model to replace the rules engine.
+model FitFeedback {
+  id               String          @id @default(uuid()) @db.Uuid
+  userId           String          @db.Uuid
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recommendationId String?         @db.Uuid
+  recommendation   Recommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  garmentId        String          @db.Uuid
+  garment          Garment         @relation(fields: [garmentId], references: [id], onDelete: Cascade)
+
+  sizeChosen String
+  outcome    FitOutcome
+  comment    String?
+
+  createdAt DateTime @default(now())
+
+  @@index([garmentId, outcome])
 }

@@ -10,6 +10,7 @@ import { UploadsModule } from './modules/uploads/uploads.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { AvatarsModule } from './modules/avatars/avatars.module';
 import { HealthModule } from './modules/health/health.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 import { AuthGuard } from './common/auth.guard';
 
 @Module({
@@ -25,6 +26,7 @@ import { AuthGuard } from './common/auth.guard';
     UploadsModule,
     JobsModule,
     AvatarsModule,
+    CatalogModule,
     HealthModule,
   ],
   providers: [

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import type { CaptureMode, ScaleSource, StageName } from '@tailorai/contracts';
+import type { CaptureMode, ScaleSource, ScanReport, StageName } from '@tailorai/contracts';
 import type { Storage } from '../clients/storage';
 import type { GpuClient } from '../clients/gpu';
 import type { EventPublisher } from '../events';
@@ -78,6 +78,11 @@ export interface PipelineState {
 
   /** Per-stage timings. Turns the estimates in docs/06 §2 into measurements. */
   timings: Record<string, number>;
+
+  /** Four-view scan: view → source asset id. Null for every other capture. */
+  scanViews: Partial<Record<'front' | 'back' | 'left' | 'right', string>> | null;
+  /** Four-view scan result (accepted scans only). */
+  scan: ScanReport | null;
 }
 
 export function initialState(mode: CaptureMode): PipelineState {
@@ -107,6 +112,8 @@ export function initialState(mode: CaptureMode): PipelineState {
     vertexCount: 0,
     triangleCount: 0,
     timings: {},
+    scanViews: null,
+    scan: null,
   };
 }
 
@@ -155,6 +162,8 @@ export const TRANSIENT_RETRY: RetryPolicy = {
     'CORRUPT_MEDIA',
     'NUDITY_DETECTED',
     'UNSUPPORTED_FORMAT',
+    'SCAN_REJECTED',
+    'HEIGHT_REQUIRED',
   ],
 };
 

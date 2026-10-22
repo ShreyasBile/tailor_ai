@@ -38,7 +38,7 @@ class BiRefNetAdapter:
             return
 
         try:
-            import torch  # noqa: PLC0415
+            import torch  # noqa: PLC0415, F401 — availability check for the extras
             from transformers import AutoModelForImageSegmentation  # noqa: PLC0415
         except ImportError as exc:
             raise inference_failed(

@@ -240,3 +240,90 @@ class HealthResponse(BaseModel):
     loadedModels: list[str] = Field(default_factory=list)
     adapters: AdapterInfo
     modelTier: str
+
+
+# ── /measure (research: anthropometry from shape) ──
+
+
+class MeasureRequest(BaseModel):
+    shape: list[float]
+    metricScale: float = 1.0
+
+
+class MeasurementRegion(BaseModel):
+    """Where a measurement sits on the body, for the app's highlight overlay.
+
+    `kind`: 'girth' (a horizontal band), 'width' (a horizontal span), or
+    'length' (a vertical span). `y`/`y0`/`y1` are fractions of stature from the
+    ground (0=feet, 1=head), so the app can place the highlight without knowing
+    the mesh.
+    """
+
+    value: float
+    unit: str = "cm"
+    kind: Literal["girth", "width", "length"]
+    y: float | None = None
+    y0: float | None = None
+    y1: float | None = None
+    side: Literal["torso", "arm", "leg", "full"] = "torso"
+
+
+class MeasureResponse(BaseModel):
+    measurements: dict[str, float | None]
+    regions: dict[str, MeasurementRegion]
+    elapsedMs: int
+
+
+# ── /scan/analyze (four-view MVP scan) ──
+
+
+class ScanView(BaseModel):
+    view: Literal["front", "back", "left", "right"]
+    # Presigned URL, or a data: URI (used by /process-scan callers).
+    imageUrl: str
+
+
+class ScanAnalyzeRequest(BaseModel):
+    jobId: str | None = None
+    heightCm: float = Field(gt=50, lt=260)
+    views: list[ScanView]
+    fitBody: bool = True
+
+
+# ── /fit/recommend ──
+
+
+class FitGarment(BaseModel):
+    category: str
+    fitIntent: Literal["slim", "regular", "relaxed", "oversized"] = "regular"
+    stretch: Literal["none", "low", "medium", "high"] = "none"
+
+
+class SizeChartRow(BaseModel):
+    label: str
+    # dimension → [min_cm, max_cm] body measurement range for this size
+    measurements: dict[str, tuple[float, float]]
+
+
+class FitRecommendRequest(BaseModel):
+    # name → cm, or name → {"value": cm, "confidence": 0..1}
+    body: dict[str, float | dict[str, float]]
+    garment: FitGarment
+    sizeChart: list[SizeChartRow]
+    preference: Literal["snug", "regular", "loose"] = "regular"
+
+
+# ── /process-scan (the MVP plan's §7 interface contract, verbatim shape) ──
+
+
+class ProcessScanImages(BaseModel):
+    front: str
+    back: str
+    left: str
+    right: str
+
+
+class ProcessScanRequest(BaseModel):
+    scan_id: str
+    height_cm: float = Field(gt=50, lt=260)
+    images: ProcessScanImages

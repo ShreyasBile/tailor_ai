@@ -201,17 +201,27 @@ def _tapered_limb(
     return _loft(rings)
 
 
-def build(shape: list[float] | np.ndarray, metric_scale: float = 1.0) -> trimesh.Trimesh:
+def build(
+    shape: list[float] | np.ndarray,
+    metric_scale: float = 1.0,
+    return_landmarks: bool = False,
+):
     """Build a humanoid mesh from shape coefficients.
 
     Args:
         shape: coefficient vector (MHR-compatible, 45 dims).
         metric_scale: multiplier taking the canonical mesh to real-world size.
+        return_landmarks: when True, also return a dict of right-side anatomical
+            landmark points (shoulder/elbow/wrist/hip/ankle + crotch_y) in the
+            final mesh frame — used by the research measurement extractor for
+            arm girths and limb lengths.
 
     Returns:
-        A watertight-ish trimesh in metres, Y-up, facing +Z.
+        A watertight-ish trimesh in metres, Y-up, facing +Z. If
+        `return_landmarks`, a (mesh, landmarks) tuple.
     """
     p = BodyProportions.from_shape(shape)
+    lm_raw: dict[str, np.ndarray] = {}
 
     # One height, one frame of reference. Every landmark derives from H.
     h = CANONICAL_HEIGHT_M * p.height
@@ -269,6 +279,11 @@ def build(shape: list[float] | np.ndarray, metric_scale: float = 1.0) -> trimesh
         limbs.append(_tapered_limb(shoulder, elbow, 0.030 * h * p.girth, 0.024 * h * p.girth))
         limbs.append(_tapered_limb(elbow, wrist, 0.024 * h * p.girth, 0.018 * h * p.girth))
 
+        if side == 1.0:
+            lm_raw["shoulder"] = shoulder.copy()
+            lm_raw["elbow"] = elbow.copy()
+            lm_raw["wrist"] = wrist.copy()
+
         hand = trimesh.creation.icosphere(subdivisions=1, radius=0.024 * h * p.girth)
         hand.apply_scale([0.7, 1.35, 0.45])
         hand.apply_translation(wrist + np.array([0.0, -0.022 * h, 0.0]))
@@ -287,6 +302,11 @@ def build(shape: list[float] | np.ndarray, metric_scale: float = 1.0) -> trimesh
         limbs.append(_tapered_limb(hip, knee, 0.050 * h * p.girth, 0.033 * h * p.girth))
         limbs.append(_tapered_limb(knee, ankle, 0.033 * h * p.girth, 0.022 * h * p.girth))
 
+        if side == 1.0:
+            lm_raw["hip"] = hip.copy()
+            lm_raw["ankle"] = ankle.copy()
+            lm_raw["crotch_y"] = np.array([0.0, _TORSO_SECTIONS[0][0] * h, 0.0])
+
         # Foot extends forward in +Z, which sets the model's facing direction.
         foot = trimesh.creation.box(extents=[0.048 * h * p.girth, 0.030 * h, 0.145 * h])
         foot.apply_translation(ankle + np.array([0.0, -0.012 * h, 0.042 * h]))
@@ -297,13 +317,14 @@ def build(shape: list[float] | np.ndarray, metric_scale: float = 1.0) -> trimesh
     # Ground at y=0 and centre horizontally, so the viewer's grid and contact
     # shadow line up without per-model fiddling.
     bounds = mesh.bounds
-    mesh.apply_translation(
+    t1 = np.array(
         [
             -(bounds[0][0] + bounds[1][0]) / 2.0,
             -bounds[0][1],
             -(bounds[0][2] + bounds[1][2]) / 2.0,
         ]
     )
+    mesh.apply_translation(t1)
 
     # Normalise to the exact requested stature.
     #
@@ -311,19 +332,53 @@ def build(shape: list[float] | np.ndarray, metric_scale: float = 1.0) -> trimesh
     # depends on its scaling), leaving ~1% error. When a user states their
     # height, the delivered model must be that height — an avatar 1.5 cm off
     # would poison every measurement derived from it later.
+    s = 1.0
     if metric_scale and metric_scale > 0:
         target_height = CANONICAL_HEIGHT_M * float(metric_scale)
         current_height = float(mesh.bounds[1][1] - mesh.bounds[0][1])
         if current_height > 1e-6:
-            mesh.apply_scale(target_height / current_height)
-            mesh.apply_translation([0.0, -float(mesh.bounds[0][1]), 0.0])
+            s = target_height / current_height
+            mesh.apply_scale(s)
+            reground = -float(mesh.bounds[0][1])
+            mesh.apply_translation([0.0, reground, 0.0])
 
     mesh.merge_vertices()
     # multibody=True: the model is a concatenation of separate closed parts
     # (torso, head, four limbs), so winding must be fixed per component.
     mesh.fix_normals(multibody=True)
 
-    return mesh
+    if not return_landmarks:
+        return mesh
+
+    # Map raw landmarks through the same transforms: translate by t1, scale by s
+    # about the origin (the re-ground translate is a no-op in y since the mesh is
+    # already grounded after scaling from y-min 0).
+    landmarks = {k: ((v + t1) * s) for k, v in lm_raw.items()}
+    landmarks["crotch_y"] = float(landmarks["crotch_y"][1])
+
+    # Torso submesh in the FINAL frame, so girths can be sliced free of the
+    # A-pose arms that contaminate a fused-mesh horizontal cut.
+    torso_final = torso.copy()
+    torso_final.apply_translation(t1)
+    torso_final.apply_scale(s)
+
+    # Limb girths analytically from the tapered-tube radii (circular by
+    # construction), which is exact for this parametric model and avoids
+    # slicing angled limbs. Radii mirror the _tapered_limb calls above.
+    def circ(r_raw: float) -> float:
+        return float(2.0 * np.pi * r_raw * s * 100.0)  # raw metres → final cm
+
+    limb_girths = {
+        "bicep": circ(0.027 * h * p.girth),    # mid upper-arm
+        "forearm": circ(0.021 * h * p.girth),  # mid forearm
+        "wrist": circ(0.018 * h * p.girth),    # forearm end
+        "thigh": circ(0.050 * h * p.girth),    # upper thigh
+        "calf": circ(0.033 * h * p.girth),     # upper calf
+        "ankle": circ(0.022 * h * p.girth),    # ankle
+    }
+
+    info = {"landmarks": landmarks, "torso_mesh": torso_final, "limb_girths": limb_girths}
+    return mesh, info
 
 
 def apply_cylindrical_uv(mesh: trimesh.Trimesh) -> np.ndarray:

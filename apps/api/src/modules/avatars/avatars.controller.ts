@@ -4,6 +4,7 @@ import {
   type AvatarRender,
   type BodyCore,
   type ExportRecord,
+  type MeasurementsResponse,
 } from '@tailorai/contracts';
 import { AvatarsService } from './avatars.service';
 import { zodBody } from '../../common/zod.pipe';
@@ -26,6 +27,11 @@ export class AvatarsController {
   @Get('me/body-core/history')
   async coreHistory(@CurrentUser() user: AuthedUser): Promise<BodyCore[]> {
     return this.avatars.getCoreHistory(user.id);
+  }
+
+  @Get('me/measurements')
+  async measurements(@CurrentUser() user: AuthedUser): Promise<MeasurementsResponse> {
+    return this.avatars.getMeasurements(user.id);
   }
 
   // ── Renders ──

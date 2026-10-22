@@ -7,9 +7,24 @@ import {
   type Coverage,
   type ExportFormat,
   type ExportRecord,
+  type MeasurementsResponse,
 } from '@tailorai/contracts';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { loadEnv } from '../../config/env';
+
+const CANONICAL_HEIGHT_CM = 175.0;
+
+/** Display order of the four-view scan's measurements (scan engine order). */
+const MEASUREMENT_ORDER = [
+  'height', 'chest', 'waist', 'hip', 'shoulder_width', 'inseam',
+  'thigh', 'arm_length', 'neck', 'torso_length', 'calf',
+];
+const MEASUREMENT_LABELS: Record<string, string> = {
+  height: 'Height', chest: 'Chest', waist: 'Waist', hip: 'Hip',
+  shoulder_width: 'Shoulder width', inseam: 'Inseam', thigh: 'Thigh',
+  arm_length: 'Arm length', neck: 'Neck', torso_length: 'Torso length', calf: 'Calf',
+};
 
 @Injectable()
 export class AvatarsService {
@@ -36,6 +51,103 @@ export class AvatarsService {
     });
     if (!core) throw new AppError('NOT_FOUND', undefined, "You don't have a body profile yet.");
     return this.toCoreDto(core, includeParams);
+  }
+
+  /**
+   * The 14 anthropometric measurements for the user's current body profile.
+   *
+   * Derived, not stored — like the avatar render. The BodyCore's shape vector
+   * is the source of truth; measurements are recomputed from it by the
+   * reconstruction service so they always reflect the latest extractor. Every
+   * value ships with `estimated` + `confidence`: a measurement is never
+   * presented as an authoritative number stripped of its uncertainty.
+   */
+  async getMeasurements(userId: string): Promise<MeasurementsResponse> {
+    const core = await this.prisma.bodyCore.findFirst({
+      where: { userId, isCurrent: true },
+      orderBy: { version: 'desc' },
+      include: { measurements: true },
+    });
+    if (!core) throw new AppError('NOT_FOUND', undefined, "You don't have a body profile yet.");
+
+    // Four-view scans store measured values (with per-measurement confidence)
+    // at scan time. Those are the user's numbers; serve them as recorded.
+    if (core.measurements.length > 0) {
+      const order = MEASUREMENT_ORDER;
+      const rows = [...core.measurements].sort(
+        (a, b) => order.indexOf(a.name) - order.indexOf(b.name),
+      );
+      return {
+        bodyCoreId: core.id,
+        estimated: true,
+        confidence: core.overallQuality,
+        scaleSource: core.scaleSource,
+        heightCm: core.heightCm,
+        measurements: Object.fromEntries(rows.map((m) => [m.name, m.valueCm])),
+        regions: Object.fromEntries(
+          rows.map((m) => {
+            const r = (m.region ?? {}) as Record<string, unknown>;
+            return [
+              m.name,
+              {
+                value: m.valueCm,
+                unit: 'cm' as const,
+                kind: (r.kind as 'girth' | 'width' | 'length') ?? 'length',
+                y: (r.y as number | undefined) ?? null,
+                y0: (r.y0 as number | undefined) ?? null,
+                y1: (r.y1 as number | undefined) ?? null,
+                side: (r.side as 'torso' | 'arm' | 'leg' | 'full') ?? 'torso',
+              },
+            ];
+          }),
+        ),
+        details: rows.map((m) => ({
+          name: m.name,
+          label: MEASUREMENT_LABELS[m.name] ?? m.name,
+          value: m.valueCm,
+          unit: 'cm' as const,
+          confidence: m.confidence,
+          method: m.method,
+          sources: m.sources,
+          kind: ((m.region as { kind?: string } | null)?.kind ?? 'length') as 'girth' | 'width' | 'length',
+          region: (m.region ?? {}) as Record<string, unknown>,
+          typicalErrorCm: m.typicalErrorCm,
+        })),
+        engineVersion: rows[0]?.engineVersion ?? null,
+      };
+    }
+
+    const env = loadEnv();
+    const metricScale =
+      core.metricScale && core.metricScale > 0
+        ? core.metricScale
+        : (core.heightCm ?? CANONICAL_HEIGHT_CM) / CANONICAL_HEIGHT_CM;
+
+    let derived: { measurements: Record<string, number | null>; regions: Record<string, unknown> };
+    try {
+      const res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/measure`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
+        body: JSON.stringify({ shape: core.shapeParams, metricScale }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) throw new Error(`measure ${res.status}`);
+      derived = (await res.json()) as typeof derived;
+    } catch (err) {
+      this.logger.error(`measurement derivation failed: ${String(err)}`);
+      throw new AppError('INFERENCE_FAILED', { userId }, "We couldn't work out your measurements.");
+    }
+
+    return {
+      bodyCoreId: core.id,
+      // Always estimated until real geometry (SAM 3D Body / MHR) is wired in.
+      estimated: true,
+      confidence: core.overallQuality,
+      scaleSource: core.scaleSource,
+      heightCm: core.heightCm,
+      measurements: derived.measurements,
+      regions: derived.regions as MeasurementsResponse['regions'],
+    };
   }
 
   async getCoreHistory(userId: string): Promise<BodyCoreDto[]> {
