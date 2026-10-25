@@ -3,10 +3,13 @@ import {
   AppError,
   type AdminStatus,
   type CreateGarmentRequest,
+  type GeneratedImage,
+  type ProductPhotoRequest,
   type ReadSizeChartRequest,
   type ReadSizeChartResponse,
 } from '@tailorai/contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { loadEnv } from '../../config/env';
 
 function slugify(s: string): string {
@@ -24,7 +27,10 @@ function slugify(s: string): string {
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async status(userId: string): Promise<AdminStatus> {
     const env = loadEnv();
@@ -70,6 +76,25 @@ export class AdminService {
     return (await res.json()) as ReadSizeChartResponse;
   }
 
+  /** A product photo from the outfit's details (Gemini), returned for preview. */
+  async productPhoto(req: ProductPhotoRequest): Promise<GeneratedImage> {
+    const env = loadEnv();
+    let res: Response;
+    try {
+      res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/catalog/product-photo`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
+        body: JSON.stringify({ garment: req }),
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (err) {
+      this.logger.error(`product photo failed: ${String(err)}`);
+      throw new AppError('INFERENCE_FAILED', undefined, "We couldn't create a photo right now. Please try again.");
+    }
+    if (!res.ok) throw new AppError('INFERENCE_FAILED', { status: res.status }, "We couldn't create a photo right now.");
+    return (await res.json()) as GeneratedImage;
+  }
+
   /** Brand (existing or new) → size chart → garment, in one transaction. */
   async createGarment(req: CreateGarmentRequest): Promise<{ slug: string }> {
     const sizes = req.sizeChart.sizes.filter((s) => Object.keys(s.measurements).length > 0);
@@ -98,6 +123,19 @@ export class AdminService {
       let slug = `${brand.slug}-${slugify(req.name)}`.slice(0, 60);
       for (let n = 2; await tx.garment.findUnique({ where: { slug } }); n++) {
         slug = `${brand.slug}-${slugify(req.name)}`.slice(0, 56) + `-${n}`;
+      }
+
+      // A generated photo goes to the private bucket (served via the API);
+      // a pasted https link is stored as given.
+      let imageUrl: string | null = req.imageUrl ?? null;
+      if (req.imageBase64) {
+        const bytes = Buffer.from(req.imageBase64, 'base64');
+        const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8;
+        const isPng = bytes[0] === 0x89 && bytes[1] === 0x50;
+        if (!isJpeg && !isPng) throw new AppError('VALIDATION_FAILED', undefined, 'The photo must be a JPEG or PNG.');
+        const key = `catalog/${slug}.${isPng ? 'png' : 'jpg'}`;
+        await this.storage.putObject(key, bytes, isPng ? 'image/png' : 'image/jpeg');
+        imageUrl = `storage:${key}`;
       }
 
       const chart = await tx.sizeChart.create({
@@ -132,6 +170,7 @@ export class AdminService {
           currency: req.currency.toUpperCase(),
           colorName: req.colorName.trim(),
           colorHex: req.colorHex,
+          imageUrl,
           isActive: true,
         },
       });

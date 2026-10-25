@@ -49,10 +49,10 @@ def test_explanation_sends_only_numbers(result):
     text = gemini.explain_fit(result, GARMENT, "regular", client=fake)
     assert text and size in text
     sent = json.loads(fake.calls[0]["contents"])
-    assert set(sent) == {"recommendedSize", "alternativeSize", "betweenSizes", "fitScore", "fitLabel",
+    assert set(sent) == {"recommendedSize", "alternativeSize", "betweenSizes", "fitScore", "fitLabel", "noSizeFits", "smallerSizesTooTight",
                          "garment", "shopperPreference", "dimensions"}
     for d in sent["dimensions"]:
-        assert set(d) == {"area", "yourMeasurementCm", "sizeRangeCm", "verdict", "roomVersusIdealCm"}
+        assert set(d) == {"area", "yourMeasurementCm", "sizeRangeCm", "verdict", "outsideSizeRangeCm"}
     assert fake.calls[0]["model"] == gemini.TEXT_MODEL
 
 
@@ -140,3 +140,68 @@ def test_photo_check_needs_explicit_opt_in(monkeypatch):
     assert gemini.enabled() and not gemini.photo_check_enabled()
     monkeypatch.setenv("GEMINI_PHOTO_CHECK", "true")
     assert gemini.photo_check_enabled()
+
+
+# ── images ──
+
+
+class FakeImages:
+    """Stands in for client.interactions (the image API)."""
+
+    def __init__(self, data=b"\xff\xd8jpeg", error=None):
+        import base64
+
+        self.calls = []
+        self._out, self._error = base64.b64encode(data).decode(), error
+        self.interactions = self
+
+    def create(self, **kw):
+        self.calls.append(kw)
+        if self._error:
+            raise self._error
+        return SimpleNamespace(output_image=SimpleNamespace(data=self._out, mime_type="image/jpeg"))
+
+
+KURTA = {"name": "Handloom Cotton Kurta", "subcategory": "Kurtas", "gender": "men", "fitIntent": "REGULAR",
+         "material": "100% handloom cotton", "description": "A knee-length kurta.", "colorName": "Saffron",
+         "colorHex": "#e08a2c"}
+
+
+def test_product_photo_prompt_describes_the_garment_only():
+    p = gemini.product_photo_prompt(KURTA)
+    assert "Saffron" in p and "#e08a2c" in p and "men's" in p and "kurta" in p.lower()
+    assert "No person" in p and "no logo" in p
+
+
+def test_product_photo_uses_the_product_model():
+    fake = FakeImages()
+    data, mime = gemini.product_photo(KURTA, client=fake)
+    assert data == b"\xff\xd8jpeg" and mime == "image/jpeg"
+    assert fake.calls[0]["model"] == gemini.PRODUCT_IMAGE_MODEL
+    assert fake.calls[0]["response_format"]["type"] == "image"
+
+
+def test_photo_tryon_sends_person_then_garment_and_keeps_the_body():
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (2000, 3000), "white").save(buf, format="JPEG")
+    fake = FakeImages()
+    out = gemini.photo_tryon(buf.getvalue(), b"\xff\xd8garment", "image/jpeg", "Saffron kurta", client=fake)
+    assert out is not None
+    parts = fake.calls[0]["input"]
+    assert [p["type"] for p in parts] == ["text", "image", "image"]
+    assert "do not make them slimmer" in parts[0]["text"]
+    assert fake.calls[0]["model"] == gemini.TRYON_IMAGE_MODEL
+    # The person photo is downscaled before it leaves the service.
+    import base64
+
+    sent = Image.open(BytesIO(base64.b64decode(parts[1]["data"])))
+    assert max(sent.size) <= 1024
+
+
+def test_image_failures_return_none():
+    assert gemini.product_photo(KURTA, client=FakeImages(error=TimeoutError())) is None
+    assert gemini.photo_tryon(b"not an image", b"x", "image/jpeg", "x", client=FakeImages()) is None

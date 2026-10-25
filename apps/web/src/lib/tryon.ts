@@ -47,7 +47,8 @@ interface Spec {
   hem: (l: Landmarks) => number;
   sleeve: Sleeve;
   legs: 'none' | 'short' | 'long';
-  /** Hangs as a tube below the hip rather than following the legs. */
+  /** Hangs from the waist, falling straight from the fullest point of belly
+   * and hips, rather than following the legs. */
   drape: boolean;
   /** Extra radius (fraction of stature) per unit of stature below the hip. */
   flare: number;
@@ -94,8 +95,11 @@ export interface ZoneTag {
   name: string;
   label: string;
   verdict: string;
-  /** Ease in cm (girths) or garment-minus-body length (lengths). */
+  /** Distance from the size's range: + garment too small/short, − too big/long, 0 fits. */
   deltaCm: number;
+  isLength: boolean;
+  /** The body measurement behind this verdict is low-confidence. */
+  unsure: boolean;
   position: THREE.Vector3;
   color: string;
 }
@@ -115,7 +119,13 @@ export const FIT_COLORS = {
   relaxed: '#7bbf9a',
   loose: '#5b9bd5',
   veryLoose: '#2f6fb5',
+  unsure: '#a3a7ad',
 } as const;
+
+/** The scan doubts this measurement (e.g. a thigh read through loose
+ * trousers): show the zone as unknown rather than paint a verdict as fact. */
+export const UNSURE_BELOW = 0.3;
+const isUnsure = (d: FitDimension) => d.confidence !== undefined && d.confidence < UNSURE_BELOW;
 
 export function verdictColor(verdict: string): string {
   const v = verdict.toLowerCase();
@@ -282,13 +292,19 @@ export function buildTryOn(input: TryOnInput): TryOnResult {
     return bestD > 0.03 * s ? 'hand' : best.part;
   };
 
-  // Ease (cm) per girth dimension: design ease for this kind and cut, plus how
-  // much more (or less) room than ideal the engine found for this size.
-  const room = (name: string) => dims.get(name)?.roomCm ?? 0;
-  const easeChest = spec.ease.chest * cut + room('chest');
-  const easeWaist = spec.ease.waist * cut + room('waist');
-  const easeHip = spec.ease.hip * cut + (dims.has('hip') ? room('hip') : room('waist'));
-  const easeThigh = spec.ease.thigh * cut + (dims.has('thigh') ? room('thigh') : room('hip'));
+  // Ease (cm) per zone: the garment's design ease for this kind and cut, less
+  // however far the body is outside this size's range — the same number the
+  // fit engine reports — so a zone it calls too small hugs the body and one it
+  // calls too big hangs off it. Older results without outsideCm use roomCm.
+  const easeFor = (name: string, design: number, fallback?: string): number => {
+    const d = dims.get(name) ?? (fallback ? dims.get(fallback) : undefined);
+    if (!d) return design;
+    return d.outsideCm !== undefined ? design - d.outsideCm : design + d.roomCm;
+  };
+  const easeChest = easeFor('chest', spec.ease.chest * cut);
+  const easeWaist = easeFor('waist', spec.ease.waist * cut);
+  const easeHip = easeFor('hip', spec.ease.hip * cut, 'waist');
+  const easeThigh = easeFor('thigh', spec.ease.thigh * cut, 'hip');
 
   const torsoKnots: [number, number][] = [];
   if (spec.ease.chest > 0) torsoKnots.push([l.shoulder, easeChest * 0.8], [l.chest, easeChest]);
@@ -307,7 +323,7 @@ export function buildTryOn(input: TryOnInput): TryOnResult {
     const garmentInseam = (inseam.range[0] + inseam.range[1]) / 2;
     hem = Math.max(0.008, l.crotch - garmentInseam / (H * 100));
   }
-  const drapeStart = spec.drape ? l.hip - 0.03 : -1;
+  const drapeStart = spec.drape ? l.waist : -1;
 
   // Sleeve reach (metres from the shoulder point along the arm).
   const armLen = (input.armLengthCm ?? 0.27 * H * 100) / 100;
@@ -321,108 +337,166 @@ export function buildTryOn(input: TryOnInput): TryOnResult {
   const shoulderL = new THREE.Vector3(torsoAtShoulder?.min ?? cx - 0.18 * s, y0 + l.shoulder * H, cz);
   const shoulderR = new THREE.Vector3(torsoAtShoulder?.max ?? cx + 0.18 * s, y0 + l.shoulder * H, cz);
 
-  // ── per-vertex coverage and offset ──
+  // ── per-vertex offset, zone and coverage ──
+  // `cover` is a signed distance (m) inside the garment's coverage: positive
+  // inside, negative outside. Faces are clipped where it crosses zero, so hems,
+  // cuffs and the neckline are clean cuts rather than a saw-tooth of whole
+  // triangles.
   const n = pos.count;
-  const covered = new Uint8Array(n);
+  const cover = new Float32Array(n);
   const offset = new Float32Array(n);
   const zone = new Array<string>(n);
   const thickness = 0.003 * s;
+  const OUTSIDE = -0.02;
   const v = new THREE.Vector3();
   const toM = (easeCm: number) => Math.max(easeCm, 0) / (2 * Math.PI) / 100;
+  // A hanging garment's top part reaches a little below where the hang
+  // starts, so the two overlap instead of showing a band of skin.
+  const torsoLow = spec.drape ? Math.max(hem, drapeStart - 0.012) : hem;
 
   for (let i = 0; i < n; i++) {
     v.fromBufferAttribute(pos, i);
     const f = (v.y - y0) / H;
     const part = partOf(v.x, v.y);
     if (part === 'torso') {
-      if (f > top || f < Math.max(hem, drapeStart)) continue;
-      covered[i] = 1;
       offset[i] = toM(interp(torsoKnots, f)) + thickness;
       zone[i] = f > (l.chest + l.shoulder) / 2 && dims.has('shoulder_width') ? 'shoulder_width'
         : nearestZone(f, l, dims, ['chest', 'waist', 'hip']);
+      cover[i] = Math.min(f - torsoLow, top - f) * H;
     } else if (part === 'armL' || part === 'armR') {
-      if (spec.sleeve === 'none') continue;
       const d = v.distanceTo(part === 'armL' ? shoulderL : shoulderR);
-      if (d > sleeveReach) continue;
-      covered[i] = 1;
       const taper = 1 - 0.45 * Math.min(1, d / Math.max(armLen, 1e-3));
       offset[i] = toM((easeChest * 0.35 + 3) * taper) + thickness;
       zone[i] = spec.sleeve === 'long' && armDim && d > sleeveReach * 0.82 ? 'arm_length' : dims.has('chest') ? 'chest' : 'waist';
+      cover[i] = spec.sleeve === 'none' ? OUTSIDE : sleeveReach - d;
     } else if (part === 'legL' || part === 'legR') {
-      if (spec.legs === 'none' || f < hem) continue;
-      covered[i] = 1;
       offset[i] = toM(interp(legKnots, f)) + thickness;
       zone[i] = inseam && f < hem + 0.06 ? 'inseam' : dims.has('thigh') && f > l.crotch - 0.1 ? 'thigh' : dims.has('hip') ? 'hip' : 'waist';
+      cover[i] = spec.legs === 'none' ? OUTSIDE : (f - hem) * H;
+    } else {
+      offset[i] = thickness;
+      zone[i] = '';
+      cover[i] = OUTSIDE;
     }
   }
 
-  // ── shell faces ──
+  // ── shell faces, clipped at the coverage boundary ──
   const positions: number[] = [];
   const colors: number[] = [];
-  const col = new THREE.Color();
   const zoneColor = new Map<string, THREE.Color>();
-  for (const [name, d] of dims) zoneColor.set(name, new THREE.Color(verdictColor(d.verdict)));
+  for (const [name, d] of dims) zoneColor.set(name, new THREE.Color(isUnsure(d) ? FIT_COLORS.unsure : verdictColor(d.verdict)));
   const fallback = new THREE.Color(FIT_COLORS.good);
-  const pushVertex = (i: number) => {
+  type Vtx = [number, number, number, number, number, number]; // x y z r g b
+  const vtx = (i: number): Vtx => {
     v.fromBufferAttribute(pos, i);
     const o = offset[i]!;
-    positions.push(v.x + nrm.getX(i) * o, v.y + nrm.getY(i) * o, v.z + nrm.getZ(i) * o);
-    col.copy(zoneColor.get(zone[i] ?? '') ?? fallback);
-    colors.push(col.r, col.g, col.b);
+    const c = zoneColor.get(zone[i] ?? '') ?? fallback;
+    return [v.x + nrm.getX(i) * o, v.y + nrm.getY(i) * o, v.z + nrm.getZ(i) * o, c.r, c.g, c.b];
+  };
+  const lerp = (a: Vtx, b: Vtx, t: number): Vtx => a.map((x, k) => x + (b[k]! - x) * t) as Vtx;
+  const emit = (p: Vtx) => {
+    positions.push(p[0], p[1], p[2]);
+    colors.push(p[3], p[4], p[5]);
   };
   for (let t = 0; t < index.count; t += 3) {
-    const i0 = index.getX(t), i1 = index.getX(t + 1), i2 = index.getX(t + 2);
-    if (covered[i0] && covered[i1] && covered[i2]) {
-      pushVertex(i0); pushVertex(i1); pushVertex(i2);
+    const ids = [index.getX(t), index.getX(t + 1), index.getX(t + 2)];
+    const sv = ids.map((i) => cover[i]!);
+    if (sv.every((x) => x < 0)) continue;
+    const vs = ids.map(vtx);
+    if (sv.every((x) => x >= 0)) {
+      vs.forEach(emit);
+      continue;
+    }
+    const poly: Vtx[] = [];
+    for (let e = 0; e < 3; e++) {
+      const a = e, b = (e + 1) % 3;
+      if (sv[a]! >= 0) poly.push(vs[a]!);
+      if (sv[a]! >= 0 !== sv[b]! >= 0) poly.push(lerp(vs[a]!, vs[b]!, sv[a]! / (sv[a]! - sv[b]!)));
+    }
+    for (let k = 1; k + 1 < poly.length; k++) {
+      emit(poly[0]!);
+      emit(poly[k]!);
+      emit(poly[k + 1]!);
     }
   }
 
-  // ── drape tube (skirts, dresses, kurtas, coats) ──
+  // ── the hang (skirts, dresses, kurtas, coats) ──
+  // Built from the body's own outline: at each height, in each direction
+  // round the body, the fabric sits just outside the furthest point of hip or
+  // leg — and never moves back in, as fabric falls from the widest point.
   if (spec.drape && hem < drapeStart) {
-    const hipRing = sectionEllipse(pos, index, y0 + drapeStart * H, cx, cz);
-    if (hipRing) {
-      const seg = 48;
-      const rows = 24;
-      const hipColor = zoneColor.get(dims.has('hip') ? 'hip' : 'waist') ?? fallback;
-      // Start a little above the torso shell's lower edge so the two overlap
-      // instead of leaving a visible band of skin between them.
-      const tubeTop = drapeStart + 0.035;
-      const ringAt = (r: number): THREE.Vector3[] => {
-        const f = tubeTop - (r / rows) * (tubeTop - hem);
-        const y = y0 + f * H;
-        const grow = toM(easeHip) + thickness + spec.flare * cut ** 0.5 * Math.max(0, drapeStart - f) * H;
-        let rx = hipRing.rx + grow;
-        let rz = hipRing.rz + grow;
-        // Fuller thighs can reach past an ellipse taken at the hip: widen
-        // the hang just enough to enclose the legs (never the hands).
-        let k = 1;
-        for (const [px, pz] of sectionPoints(pos, index, y)) {
-          const part = partOf(px, y);
-          if (part === 'hand' || part === 'armL' || part === 'armR') continue;
-          k = Math.max(k, Math.hypot((px - hipRing.cx) / rx, (pz - hipRing.cz) / rz));
+    const bins = 64;
+    const rows = 28;
+    const outline = (f: number): [number, number][] =>
+      sectionPoints(pos, index, y0 + f * H).filter(([px]) => {
+        const part = partOf(px, y0 + f * H);
+        return part !== 'hand' && part !== 'armL' && part !== 'armR';
+      });
+    const top0 = outline(drapeStart);
+    if (top0.length > 3) {
+      const xs = top0.map((p) => p[0]), zs = top0.map((p) => p[1]);
+      const ocx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const ocz = (Math.min(...zs) + Math.max(...zs)) / 2;
+      const polar = (pts: [number, number][]): Float64Array => {
+        const r = new Float64Array(bins).fill(-1);
+        for (const [px, pz] of pts) {
+          const j = Math.floor(((Math.atan2(pz - ocz, px - ocx) + Math.PI) / (2 * Math.PI)) * bins) % bins;
+          r[j] = Math.max(r[j]!, Math.hypot(px - ocx, pz - ocz));
         }
-        if (k > 1) {
-          rx = rx * k + thickness;
-          rz = rz * k + thickness;
+        // Directions with no surface (e.g. between the legs) span across.
+        const known = [...r.keys()].filter((j) => r[j]! >= 0);
+        if (known.length === 0) return r.fill(0);
+        for (let j = 0; j < bins; j++) {
+          if (r[j]! >= 0) continue;
+          let a = j, b = j;
+          while (r[(a + bins) % bins]! < 0) a--;
+          while (r[b % bins]! < 0) b++;
+          const ra = r[(a + bins) % bins]!, rb = r[b % bins]!;
+          r[j] = ra + ((rb - ra) * (j - a)) / (b - a);
         }
-        const pts: THREE.Vector3[] = [];
-        for (let j = 0; j < seg; j++) {
-          const th = (j / seg) * Math.PI * 2;
-          pts.push(new THREE.Vector3(hipRing.cx + Math.cos(th) * rx, y, hipRing.cz + Math.sin(th) * rz));
-        }
-        return pts;
+        return r;
       };
-      let prev = ringAt(0);
-      for (let r = 1; r <= rows; r++) {
-        const cur = ringAt(r);
-        for (let j = 0; j < seg; j++) {
-          const j2 = (j + 1) % seg;
+      const smooth = (r: Float64Array): Float64Array => {
+        let cur = r;
+        for (let pass = 0; pass < 2; pass++) {
+          const nxt = new Float64Array(bins);
+          for (let j = 0; j < bins; j++) {
+            nxt[j] = 0.25 * cur[(j + bins - 1) % bins]! + 0.5 * cur[j]! + 0.25 * cur[(j + 1) % bins]!;
+          }
+          cur = nxt;
+        }
+        return cur;
+      };
+      const dropPerRow = (drapeStart - hem) / rows;
+      // Flare opens below the hip; above it the fabric only clears the body.
+      const flareStep = spec.flare * Math.sqrt(cut) * dropPerRow * H;
+      // Same distance off the body as the top part at the join.
+      const startOff = toM(interp(torsoKnots, drapeStart)) + thickness;
+      let radii = smooth(polar(top0)).map((x) => x + startOff);
+      const ring = (f: number, r: Float64Array): THREE.Vector3[] =>
+        [...r].map((rad, j) => {
+          const th = -Math.PI + ((j + 0.5) / bins) * 2 * Math.PI;
+          return new THREE.Vector3(ocx + Math.cos(th) * rad, y0 + f * H, ocz + Math.sin(th) * rad);
+        });
+      let prev = ring(drapeStart, radii);
+      for (let row = 1; row <= rows; row++) {
+        const f = drapeStart - row * dropPerRow;
+        const body = polar(outline(f));
+        const step = f < l.hip ? flareStep : 0;
+        const off = toM(interp(torsoKnots, f)) + thickness;
+        let next = radii.map((x, j) => Math.max(x + step, body[j]! + off));
+        next = smooth(next).map((x, j) => Math.max(x, radii[j]!));
+        const cur = ring(f, next);
+        const hangColor = zoneColor.get(nearestZone(f, l, dims, ['waist', 'hip'])) ?? fallback;
+        for (let j = 0; j < bins; j++) {
+          const j2 = (j + 1) % bins;
           for (const p of [prev[j]!, cur[j]!, cur[j2]!, prev[j]!, cur[j2]!, prev[j2]!]) {
             positions.push(p.x, p.y, p.z);
-            colors.push(hipColor.r, hipColor.g, hipColor.b);
+            colors.push(hangColor.r, hangColor.g, hangColor.b);
           }
         }
         prev = cur;
+        radii = next;
       }
     }
   }
@@ -439,16 +513,19 @@ export function buildTryOn(input: TryOnInput): TryOnResult {
     const d = dims.get(name);
     if (!d) return;
     const isLength = name === 'arm_length' || name === 'inseam';
-    const ease =
-      name === 'chest' ? easeChest : name === 'waist' ? easeWaist : name === 'hip' ? easeHip : name === 'thigh' ? easeThigh : d.roomCm;
-    const deltaCm = isLength ? ((d.range[0] + d.range[1]) / 2 - d.body) : ease;
+    // The engine's distance from the size's range — the same number as the
+    // size bars and the explanation. Older results: work it out the same way.
+    const [lo, hi] = d.range;
+    const outside = d.outsideCm ?? (d.body > hi ? d.body - hi : d.body < lo ? d.body - lo : 0);
     tags.push({
       name,
       label: d.label,
       verdict: d.verdict,
-      deltaCm: Math.round(deltaCm * 10) / 10,
+      deltaCm: Math.round(outside * 10) / 10,
+      isLength,
+      unsure: isUnsure(d),
       position: new THREE.Vector3(x, y0 + f * H, front),
-      color: verdictColor(d.verdict),
+      color: isUnsure(d) ? FIT_COLORS.unsure : verdictColor(d.verdict),
     });
   };
   // Girth labels sit just outside the torso (or leg) at their height — not
@@ -513,30 +590,4 @@ function sectionPoints(pos: THREE.BufferAttribute, index: THREE.BufferAttribute,
     }
   }
   return out;
-}
-
-/** Bounding ellipse of the body's central blob at height y. */
-function sectionEllipse(pos: THREE.BufferAttribute, index: THREE.BufferAttribute, y: number, cx: number, cz: number) {
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
-  const tri = [a, b, c];
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (let i = 0; i < index.count; i += 3) {
-    a.fromBufferAttribute(pos, index.getX(i));
-    b.fromBufferAttribute(pos, index.getX(i + 1));
-    c.fromBufferAttribute(pos, index.getX(i + 2));
-    for (let e = 0; e < 3; e++) {
-      const p = tri[e]!, q = tri[(e + 1) % 3]!;
-      if ((p.y - y) * (q.y - y) < 0) {
-        const t = (y - p.y) / (q.y - p.y);
-        const x = p.x + t * (q.x - p.x);
-        const z = p.z + t * (q.z - p.z);
-        // Hands hang beside the hips; keep to the body's own width.
-        if (Math.abs(x - cx) > 0.25) continue;
-        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-        minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-      }
-    }
-  }
-  if (!Number.isFinite(minX)) return null;
-  return { cx: (minX + maxX) / 2, cz: Math.max(cz - 0.2, Math.min(cz + 0.2, (minZ + maxZ) / 2)), rx: (maxX - minX) / 2, rz: (maxZ - minZ) / 2 };
 }

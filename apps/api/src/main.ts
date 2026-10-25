@@ -36,6 +36,7 @@ async function bootstrap(): Promise<void> {
   // exception: a size-chart image (downscaled in the browser) is read once
   // by Gemini and discarded, so it is posted inline rather than stored.
   app.use('/v1/admin/size-chart/read', json({ limit: '4mb' }));
+  app.use('/v1/admin/garments', json({ limit: '4mb' })); // optional generated product photo
   app.use(json({ limit: '256kb' }));
 
   app.enableShutdownHooks();

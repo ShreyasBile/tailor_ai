@@ -111,6 +111,31 @@ const PATHS: Record<Kind, { body: string; detail?: string }> = {
   },
 };
 
+/** The product photo when there is one, else the drawn illustration. */
+export function ProductImage({
+  imageUrl,
+  name,
+  subcategory,
+  category,
+  colorHex,
+  className,
+}: {
+  imageUrl: string | null | undefined;
+  name?: string;
+  subcategory: string;
+  category: string;
+  colorHex: string;
+  className?: string;
+}) {
+  if (imageUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={imageUrl} alt={name ? `${name} — product photo` : `${subcategory} photo`} loading="lazy" className={`object-cover ${className ?? ''}`} />
+    );
+  }
+  return <GarmentArt subcategory={subcategory} category={category} colorHex={colorHex} className={className} />;
+}
+
 export function GarmentArt({
   subcategory,
   category,

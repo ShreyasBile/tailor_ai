@@ -27,7 +27,9 @@ from .mesh.build import build_mesh
 from .runtime.vram import gpu_info
 from .schemas import (
     FitRecommendRequest,
+    PhotoTryOnRequest,
     ProcessScanRequest,
+    ProductPhotoRequest,
     ReadSizeChartRequest,
     ScanAnalyzeRequest,
     MeasureRequest,
@@ -363,6 +365,48 @@ def read_size_chart(req: ReadSizeChartRequest) -> dict:
         raise HTTPException(status_code=422, detail={"code": "CHART_UNREADABLE",
                                                      "message": "Couldn't find a size table in that image."})
     return result
+
+
+def _gemini_or_503():
+    from .llm import gemini
+
+    if not gemini.enabled():
+        raise HTTPException(status_code=503, detail={"code": "GEMINI_DISABLED",
+                                                     "message": "Set GEMINI_API_KEY to use AI images."})
+    return gemini
+
+
+@app.post("/catalog/product-photo", dependencies=[Depends(require_api_key)])
+def product_photo(req: ProductPhotoRequest) -> dict:
+    """A product photo for a garment, made from its description."""
+    import base64
+
+    gemini = _gemini_or_503()
+    out = gemini.product_photo(req.garment.model_dump())
+    if out is None:
+        raise HTTPException(status_code=502, detail={"code": "IMAGE_FAILED", "message": "Couldn't create a photo right now."})
+    data, mime = out
+    return {"imageBase64": base64.b64encode(data).decode(), "mimeType": mime, "model": gemini.PRODUCT_IMAGE_MODEL}
+
+
+@app.post("/tryon/photo", dependencies=[Depends(require_api_key)])
+def photo_tryon(req: PhotoTryOnRequest) -> dict:
+    """The person's scan photo wearing the garment. Nothing is stored."""
+    import base64
+
+    from .storage import fetch_bytes
+
+    gemini = _gemini_or_503()
+    person = fetch_bytes(req.personImageUrl)
+    garment = fetch_bytes(req.garmentImageUrl)
+    mime = "image/png" if garment[:4] == b"\x89PNG" else "image/webp" if garment[8:12] == b"WEBP" else "image/jpeg"
+    g = req.garment
+    what = f"{g.colorName} {g.name}, {g.subcategory.lower()}".strip()
+    out = gemini.photo_tryon(person, garment, mime, what)
+    if out is None:
+        raise HTTPException(status_code=502, detail={"code": "IMAGE_FAILED", "message": "Couldn't create the try-on photo right now."})
+    data, out_mime = out
+    return {"imageBase64": base64.b64encode(data).decode(), "mimeType": out_mime, "model": gemini.TRYON_IMAGE_MODEL}
 
 
 @app.post("/process-scan", dependencies=[Depends(require_api_key)])

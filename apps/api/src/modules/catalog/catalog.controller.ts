@@ -1,9 +1,11 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Redirect } from '@nestjs/common';
 import {
   FitFeedbackRequest,
   GarmentCategory,
+  PhotoTryOnRequest,
   RecommendRequest,
   type GarmentDetail,
+  type GeneratedImage,
   type GarmentSummary,
   type RecommendationView,
 } from '@tailorai/contracts';
@@ -43,6 +45,25 @@ export class CatalogController {
   @Get('brands')
   async brands() {
     return this.catalog.listBrands();
+  }
+
+  /** Uploaded product photos live in the private bucket: redirect to a signed URL. */
+  @Public()
+  @Get('garments/:slug/image')
+  @Redirect()
+  async image(@Param('slug') slug: string) {
+    return { url: await this.catalog.imageRedirect(slug), statusCode: 302 };
+  }
+
+  /** The shopper's scan photo wearing this item (Gemini). Consent per request. */
+  @Post('garments/:slug/photo-tryon')
+  @HttpCode(200)
+  async photoTryOn(
+    @CurrentUser() user: AuthedUser,
+    @Param('slug') slug: string,
+    @Body(zodBody(PhotoTryOnRequest)) _body: PhotoTryOnRequest,
+  ): Promise<GeneratedImage> {
+    return this.catalog.photoTryOn(user.id, slug);
   }
 
   // ── Find My Size ──

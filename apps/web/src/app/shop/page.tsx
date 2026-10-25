@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { fmtPrice, titleCase } from '@/lib/format';
 import { useSession } from '@/lib/session';
 import type { AdminStatus, GarmentSummary, RecommendationView } from '@/lib/types';
-import { GarmentArt } from '@/components/garment-art';
+import { ProductImage } from '@/components/garment-art';
 import { Badge, Button, ButtonLink, Card, EmptyState, Segmented, Spinner, cx } from '@/components/ui';
 
 const CATEGORIES = [
@@ -139,8 +139,10 @@ export default function ShopPage() {
             return (
               <Link key={g.id} href={`/shop/${g.slug}`} className="focus-ring group rounded-xl2">
                 <Card className="overflow-hidden transition group-hover:-translate-y-0.5 group-hover:shadow-lift">
-                  <div className="relative aspect-square bg-gradient-to-b from-[#fbfaf6] to-[#efece4] p-6">
-                    <GarmentArt
+                  <div className={cx('relative aspect-square overflow-hidden bg-gradient-to-b from-[#fbfaf6] to-[#efece4]', !g.imageUrl && 'p-6')}>
+                    <ProductImage
+                      imageUrl={g.imageUrl}
+                      name={g.name}
                       subcategory={g.subcategory}
                       category={g.category}
                       colorHex={g.colorHex}

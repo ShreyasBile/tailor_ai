@@ -68,6 +68,9 @@ export const EnvSchema = z.object({
   ADMIN_EMAILS: csv.default(''),
   // Only its presence is read here: the reconstruction service makes the calls.
   GEMINI_API_KEY: z.string().optional(),
+  // Where the web app serves static files (product photos under /garments),
+  // for the reconstruction service to fetch them.
+  WEB_PUBLIC_URL: z.string().url().default('http://localhost:3001'),
 
   // Compliance — see docs/06 §6. Defaults are the safe ones.
   BLOCKED_REGIONS: csv.default('US-IL'),

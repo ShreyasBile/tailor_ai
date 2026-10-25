@@ -9,7 +9,7 @@ import { Pause, Play, RotateCcw } from 'lucide-react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type { Kind } from '@/components/garment-art';
 import type { FitDimension } from '@/lib/types';
-import { buildTryOn, type Landmarks } from '@/lib/tryon';
+import { buildTryOn, type Landmarks, type ZoneTag } from '@/lib/tryon';
 
 const CLAY = new THREE.MeshStandardMaterial({ color: '#d9cab8', roughness: 0.78, metalness: 0.0 });
 
@@ -51,10 +51,14 @@ function useBody(url: string) {
   }, [gltf]);
 }
 
-function fmtDelta(cm: number, units: 'cm' | 'in') {
-  const v = units === 'in' ? cm / 2.54 : cm;
-  const sign = v > 0 ? '+' : v < 0 ? '−' : '±';
-  return `${sign}${Math.abs(v).toFixed(units === 'in' ? 1 : 0)} ${units}`;
+/** "Waist 13 cm too small", "Sleeve 11 cm too long", "Chest fits". */
+function tagText(t: ZoneTag, units: 'cm' | 'in') {
+  const v = Math.abs(units === 'in' ? t.deltaCm / 2.54 : t.deltaCm);
+  if (t.unsure) return `${t.label}: unsure`;
+  if (Math.abs(t.deltaCm) < 1) return `${t.label} fits`;
+  const amount = `${v.toFixed(units === 'in' ? 1 : 0)} ${units}`;
+  const word = t.isLength ? (t.deltaCm > 0 ? 'too short' : 'too long') : t.deltaCm > 0 ? 'too small' : 'too big';
+  return `${t.label} ${amount} ${word}`;
 }
 
 function Scene(props: TryOnProps & { spin: boolean }) {
@@ -97,7 +101,7 @@ function Scene(props: TryOnProps & { spin: boolean }) {
               className="-translate-y-1/2 whitespace-nowrap rounded-full border bg-white/95 px-2 py-0.5 text-[11px] font-medium shadow-soft"
               style={{ borderColor: t.color, color: t.color }}
             >
-              {t.label} {fmtDelta(t.deltaCm, props.units)}
+              {tagText(t, props.units)}
             </div>
           </Html>
         ))}

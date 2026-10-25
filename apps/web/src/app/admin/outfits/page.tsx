@@ -5,9 +5,9 @@ import { useRouter } from 'next/navigation';
 import { AlertTriangle, ImageUp, Plus, Ruler, Sparkles, Trash2 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtPrice } from '@/lib/format';
-import type { AdminStatus, CreateGarmentRequest, ReadSizeChartResponse, UserProfile } from '@/lib/types';
+import type { AdminStatus, CreateGarmentRequest, GeneratedImage, ReadSizeChartResponse, UserProfile } from '@/lib/types';
 import { RequireUser } from '@/components/guard';
-import { GarmentArt } from '@/components/garment-art';
+import { ProductImage } from '@/components/garment-art';
 import { Badge, Button, Card, EmptyState, Field, Segmented, Spinner, cx, inputClass } from '@/components/ui';
 
 const DIMS: { key: string; label: string }[] = [
@@ -85,8 +85,35 @@ function AddOutfit({ user }: { user: UserProfile }) {
   const [colorName, setColorName] = useState('');
   const [colorHex, setColorHex] = useState('#3a5a8c');
 
+  const [photo, setPhoto] = useState<GeneratedImage | null>(null);
+  const [photoUrl, setPhotoUrl] = useState('');
+  const [makingPhoto, setMakingPhoto] = useState(false);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function makePhoto() {
+    if (!name.trim() || !colorName.trim()) {
+      setError('Add a name and colour first — the photo is made from the details.');
+      return;
+    }
+    setMakingPhoto(true);
+    setError(null);
+    try {
+      setPhoto(
+        await api<GeneratedImage>('/admin/product-photo', {
+          method: 'POST',
+          body: { name, subcategory, gender, fitIntent, material, description, colorName, colorHex },
+        }),
+      );
+      setPhotoUrl('');
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setMakingPhoto(false);
+    }
+  }
+  const previewUrl = photo ? `data:${photo.mimeType};base64,${photo.imageBase64}` : photoUrl.startsWith('https://') ? photoUrl : null;
 
   useEffect(() => {
     api<AdminStatus>('/admin/status').then(setStatus).catch(() => setStatus({ isAdmin: false, geminiEnabled: false }));
@@ -175,6 +202,7 @@ function AddOutfit({ user }: { user: UserProfile }) {
       currency,
       colorName: colorName.trim(),
       colorHex,
+      ...(photo ? { imageBase64: photo.imageBase64 } : photoUrl.startsWith('https://') ? { imageUrl: photoUrl } : {}),
       sizeChart: { sizes: sizes.filter((s) => Object.keys(s.measurements).length > 0) },
     };
     setSaving(true);
@@ -454,6 +482,34 @@ function AddOutfit({ user }: { user: UserProfile }) {
                   />
                 </Field>
               </div>
+              <div className="sm:col-span-2">
+                <Field
+                  label="Product photo (optional)"
+                  hint="Generate one from the details above, or paste an https link to a photo you have the right to use."
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={makingPhoto}
+                      disabled={!status.geminiEnabled}
+                      onClick={makePhoto}
+                    >
+                      <Sparkles className="h-4 w-4" /> {photo ? 'Make another' : 'Generate with Gemini'}
+                    </Button>
+                    <input
+                      className={cx(inputClass, 'h-9 min-w-[14rem] flex-1')}
+                      placeholder="https://…"
+                      value={photoUrl}
+                      onChange={(e) => {
+                        setPhotoUrl(e.target.value);
+                        setPhoto(null);
+                      }}
+                      aria-label="Product photo URL"
+                    />
+                  </div>
+                </Field>
+              </div>
             </div>
           </Card>
         </div>
@@ -461,8 +517,15 @@ function AddOutfit({ user }: { user: UserProfile }) {
         {/* preview + save */}
         <div className="lg:sticky lg:top-24 lg:self-start">
           <Card className="overflow-hidden p-0">
-            <div className="aspect-square bg-gradient-to-b from-[#fbfaf6] to-[#efece4] p-10">
-              <GarmentArt subcategory={subcategory} category={category} colorHex={colorHex} className="h-full w-full" />
+            <div className={cx('aspect-square bg-gradient-to-b from-[#fbfaf6] to-[#efece4]', !previewUrl && 'p-10')}>
+              <ProductImage
+                imageUrl={previewUrl}
+                name={name}
+                subcategory={subcategory}
+                category={category}
+                colorHex={colorHex}
+                className="h-full w-full"
+              />
             </div>
             <div className="p-5">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-ink-muted">

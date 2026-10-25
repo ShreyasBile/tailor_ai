@@ -38,6 +38,7 @@ FIT_VERSION = f"{A.ANNY_VERSION}+fit-v1"
 ACROMION_OFFSET = 0.012
 DEFAULT_FRACTIONS = {"neck": 0.85, "chest": 0.72, "waist": 0.63, "hip": 0.53, "thigh": 0.44, "calf": 0.25}
 GIRTHS = ["chest", "waist", "hip", "neck", "thigh", "calf"]
+MIN_CONFIDENCE = 0.25
 LEG_GIRTHS = {"thigh", "calf"}
 
 # Which local change mainly drives each measurement (for the starting guess).
@@ -177,7 +178,10 @@ def fit(targets: dict[str, Target], height_cm: float, sex: str | None = None,
     started = time.perf_counter()
     H = height_cm / 100.0
     fracs = {k: t.frac for k, t in targets.items() if t.frac}
-    names = [n for n in DRIVER if n in targets]
+    # A reading the scan itself doubts (e.g. a thigh measured through loose
+    # trousers) would only distort the body: leave it to Anny's own
+    # proportions, which already suit this height, sex and build.
+    names = [n for n in DRIVER if n in targets and targets[n].confidence >= MIN_CONFIDENCE]
     want = set(names)
 
     p = A.default_params()
@@ -199,7 +203,7 @@ def fit(targets: dict[str, Target], height_cm: float, sex: str | None = None,
 
     # 2. weight slider: mean torso girth.
     iw = A.PHENOTYPES.index("weight")
-    torso = [n for n in ("chest", "waist", "hip") if n in targets]
+    torso = [n for n in ("chest", "waist", "hip") if n in names]
     if torso:
         goal = np.mean([targets[n].value for n in torso])
 
@@ -233,8 +237,8 @@ def fit(targets: dict[str, Target], height_cm: float, sex: str | None = None,
         return A.place(v, j, H)
 
     tgt = np.array([targets[n].value for n in names])
-    # Residuals in cm, weighted by confidence (a shaky thigh pulls less).
-    w = np.array([np.sqrt(max(targets[n].confidence, 0.05)) for n in names])
+    # Residuals in cm, weighted by confidence (a shaky reading pulls less).
+    w = np.array([targets[n].confidence for n in names])
 
     def resid(c: np.ndarray) -> np.ndarray:
         m = measure(body_lc(c), fracs, want)

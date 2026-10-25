@@ -35,6 +35,15 @@ CATEGORY_ALIASES = {
 }
 LENGTHS = {"inseam", "arm_length"}
 CRITICAL = 0.3  # weight at/above which a dimension can veto a size
+# Girths a garment has to close around. Past the stretch allowance by more
+# than BLOCK_MARGIN_CM, the size can't be worn however little the dimension
+# weighs — a tee 12 cm too small at the waist is not a "fair fit" because the
+# chest is right. Neck (only matters buttoned) and shoulders (a too-narrow
+# shoulder seam is uncomfortable, not impossible) never block. A measurement
+# below BLOCK_MIN_CONFIDENCE (e.g. loose trousers in the photo) can't block.
+BLOCKING = {"chest", "waist", "hip", "thigh"}
+BLOCK_MARGIN_CM = 2.0
+BLOCK_MIN_CONFIDENCE = 0.4
 
 LABELS = {
     "chest": "Chest", "waist": "Waist", "hip": "Hip", "shoulder_width": "Shoulders",
@@ -61,6 +70,11 @@ class DimResult:
     score: float
     verdict: str
     room_cm: float  # +: more room than ideal, −: tighter than ideal
+    # The one number shown to people: how far the body is outside this size's
+    # range. +: the garment is too small / short by that much (beyond stretch),
+    # −: too big / long, 0: inside the range.
+    outside_cm: float = 0.0
+    confidence: float = 0.7  # of the body measurement this verdict rests on
 
     def to_dict(self) -> dict:
         return {
@@ -72,6 +86,8 @@ class DimResult:
             "score": round(self.score, 3),
             "verdict": self.verdict,
             "roomCm": round(self.room_cm, 1),
+            "outsideCm": round(self.outside_cm, 1),
+            "confidence": round(self.confidence, 2),
         }
 
 
@@ -109,7 +125,13 @@ def _score_dim(name: str, body: float, lo: float, hi: float, weight: float,
         score *= 0.6
 
     verdict = _verdict(name, body, lo, hi, tol, is_length)
-    return DimResult(name, body, lo, hi, weight, score, verdict, room)
+    if body > hi + tol:
+        outside = body - (hi + tol)
+    elif body < lo:
+        outside = body - lo
+    else:
+        outside = 0.0
+    return DimResult(name, body, lo, hi, weight, score, verdict, room, outside)
 
 
 def _verdict(name: str, b: float, lo: float, hi: float, tol: float, is_length: bool) -> str:
@@ -167,17 +189,31 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
             rng = s["measurements"].get(d)
             if not rng:
                 continue
-            results.append(_score_dim(d, vals[d], float(rng[0]), float(rng[1]),
-                                      weights[d] / total_w, preference, fit_intent, stretch))
+            r = _score_dim(d, vals[d], float(rng[0]), float(rng[1]),
+                           weights[d] / total_w, preference, fit_intent, stretch)
+            r.confidence = confs.get(d, 0.7)
+            results.append(r)
         if not results:
             continue
         w_sum = sum(r.weight for r in results)
         score = sum(r.score * r.weight for r in results) / w_sum
-        # A critical dimension that won't close/fit caps the size.
-        blocked = any(r.verdict == "too tight" and r.weight >= CRITICAL for r in results)
+        # A critical dimension that won't close/fit caps the size — and so
+        # does any girth it can't close around, whatever its weight.
+        blockers = [
+            r for r in results
+            if r.verdict == "too tight" and (
+                r.weight >= CRITICAL
+                or (r.name in BLOCKING and r.outside_cm > BLOCK_MARGIN_CM
+                    and confs.get(r.name, 0.7) >= BLOCK_MIN_CONFIDENCE)
+            )
+        ]
+        blocked = bool(blockers)
         if blocked:
-            score = min(score, 0.45)
-        sizes.append({"label": s["label"], "score": score, "dims": results, "blocked": blocked})
+            # Below any size that can be worn, so the score buttons never
+            # show a size that won't close as the better choice.
+            score = min(score, 0.15)
+        sizes.append({"label": s["label"], "score": score, "dims": results, "blocked": blocked,
+                      "blockers": blockers})
 
     # A size that physically won't close ranks below every size that does — the
     # cap alone can't guarantee that, since a fitting size can also score < 0.45.
@@ -190,6 +226,13 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
     gap = max(0.0, best["score"] - second["score"]) if second is not None else 1.0
     # Within 15 points: the body sits near a size boundary in a key dimension.
     between = rival and gap < 0.15
+    # "Size up for a looser feel" is no advice when the chosen size is
+    # already loose in a key dimension — the bigger one only gets worse.
+    order_ = {s["label"]: i for i, s in enumerate(size_chart)}
+    if between and order_.get(second["label"], 0) > order_.get(best["label"], 0) and any(
+        r.outside_cm < 0 and r.weight >= 0.15 for r in best["dims"]
+    ):
+        between = False
 
     meas_conf = sum(confs.get(r.name, 0.7) * r.weight for r in best["dims"]) / sum(r.weight for r in best["dims"])
     separation = min(1.0, 0.6 + 4.0 * gap) if rival else 1.0
@@ -200,6 +243,14 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
     alt = None
     if second is not None:
         alt = second["label"]
+    # Smaller sizes ruled out because they can't close — the "why not M?"
+    # every shopper asks when told to size up.
+    too_small = [
+        {"size": s["label"], "area": LABELS.get(b.name, b.name), "cm": round(b.outside_cm, 1)}
+        for s in sizes
+        if s["blocked"] and order.get(s["label"], 0) < order.get(best["label"], 0)
+        for b in s["blockers"][:1]
+    ]
 
     return {
         "recommendedSize": best["label"],
@@ -211,11 +262,14 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
         "dimensions": [r.to_dict() for r in sorted(best["dims"], key=lambda r: -r.weight)],
         # Per-size dimension detail lets the try-on view switch sizes without
         # another round trip.
-        "sizes": [{"label": s["label"], "score": round(100 * s["score"]),
+        "sizes": [{"label": s["label"], "score": round(100 * s["score"]), "blocked": s["blocked"],
                    "dimensions": [r.to_dict() for r in sorted(s["dims"], key=lambda r: -r.weight)]}
                   for s in sorted(sizes, key=lambda s: order.get(s["label"], 0))],
-        "explanation": _explain(best, second, between, preference, fit_intent, stretch, order),
-        "engineVersion": "fit-rules-v1",
+        "smallerSizesTooTight": too_small,
+        # Even the largest size can't close: say so rather than call it a fit.
+        "noSizeFits": best["blocked"],
+        "explanation": _explain(best, second, between, preference, fit_intent, stretch, order, too_small),
+        "engineVersion": "fit-rules-v2",
     }
 
 
@@ -233,18 +287,36 @@ def _conf_label(c: float) -> str:
     return "high" if c >= 0.7 else "medium" if c >= 0.5 else "low"
 
 
+def _outside_phrase(r: DimResult) -> str:
+    """'4 cm too small' / '6 cm too long' — the size-range distance in words."""
+    cm = abs(round(r.outside_cm))
+    if cm < 1:
+        return r.verdict
+    if r.name in LENGTHS:
+        return f"{r.verdict} ({cm} cm {'short' if r.outside_cm > 0 else 'long'})"
+    return f"{r.verdict} ({cm} cm {'over' if r.outside_cm > 0 else 'under'} this size's range)"
+
+
 def _explain(best: dict, second: dict | None, between: bool, preference: str,
-             fit_intent: str, stretch: str, order: dict[str, int]) -> str:
+             fit_intent: str, stretch: str, order: dict[str, int], too_small: list[dict]) -> str:
     dims = sorted(best["dims"], key=lambda r: -r.weight)
     good = [r for r in dims if r.verdict in ("good fit", "good length")]
     other = [r for r in dims if r.verdict not in ("good fit", "good length")]
 
-    parts = [f"We recommend size {best['label']}."]
+    if best["blocked"]:
+        b = best["blockers"][0]
+        parts = [f"Even the largest size, {best['label']}, is {abs(round(b.outside_cm))} cm too small at the "
+                 f"{LABELS.get(b.name, b.name).lower()} — this item probably won't fit you."]
+    else:
+        parts = [f"We recommend size {best['label']}."]
+    if too_small and not best["blocked"]:
+        t = too_small[-1]
+        parts.append(f"Size {t['size']} would be {abs(round(t['cm']))} cm too small at the {t['area'].lower()}.")
     if good:
         names = _join([LABELS.get(r.name, r.name).lower() for r in good[:3]])
         parts.append(f"Your {names} sit{'s' if len(good) == 1 else ''} comfortably within this size.")
     for r in other[:2]:
-        parts.append(f"{LABELS.get(r.name, r.name)}: {r.verdict}.")
+        parts.append(f"{LABELS.get(r.name, r.name)}: {_outside_phrase(r)}.")
     if fit_intent in ("slim", "relaxed", "oversized"):
         parts.append(f"This is a {fit_intent} cut, which we've accounted for.")
     if stretch in ("medium", "high"):

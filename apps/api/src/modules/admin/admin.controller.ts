@@ -1,8 +1,10 @@
 import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
 import {
   CreateGarmentRequest,
+  ProductPhotoRequest,
   ReadSizeChartRequest,
   type AdminStatus,
+  type GeneratedImage,
   type ReadSizeChartResponse,
 } from '@tailorai/contracts';
 import { AdminService } from './admin.service';
@@ -27,6 +29,16 @@ export class AdminController {
   ): Promise<ReadSizeChartResponse> {
     await this.admin.assertAdmin(user.id);
     return this.admin.readSizeChart(body);
+  }
+
+  @Post('product-photo')
+  @HttpCode(200)
+  async productPhoto(
+    @CurrentUser() user: AuthedUser,
+    @Body(zodBody(ProductPhotoRequest)) body: ProductPhotoRequest,
+  ): Promise<GeneratedImage> {
+    await this.admin.assertAdmin(user.id);
+    return this.admin.productPhoto(body);
   }
 
   @Post('garments')

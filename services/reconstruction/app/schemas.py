@@ -326,6 +326,30 @@ class ReadSizeChartRequest(BaseModel):
     mimeType: Literal["image/jpeg", "image/png", "image/webp"] = "image/jpeg"
 
 
+# ── /catalog/product-photo and /tryon/photo (Gemini images) ──
+
+
+class GarmentDescription(BaseModel):
+    name: str
+    subcategory: str
+    gender: str = "unisex"
+    fitIntent: str = "REGULAR"
+    material: str = ""
+    description: str = ""
+    colorName: str = ""
+    colorHex: str = ""
+
+
+class ProductPhotoRequest(BaseModel):
+    garment: GarmentDescription
+
+
+class PhotoTryOnRequest(BaseModel):
+    personImageUrl: str
+    garmentImageUrl: str
+    garment: GarmentDescription
+
+
 # ── /process-scan (the MVP plan's §7 interface contract, verbatim shape) ──
 
 

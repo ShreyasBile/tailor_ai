@@ -528,6 +528,8 @@ export const GarmentSummary = z.object({
   currency: z.string(),
   colorName: z.string(),
   colorHex: z.string(),
+  /** Product photo URL (web path or absolute), or null for the drawn illustration. */
+  imageUrl: z.string().nullable(),
 });
 export type GarmentSummary = z.infer<typeof GarmentSummary>;
 
@@ -564,6 +566,10 @@ export const FitDimension = z.object({
   score: z.number(),
   verdict: z.string(),
   roomCm: z.number(),
+  /** Distance from this size's range: + garment too small/short, − too big/long, 0 inside. */
+  outsideCm: z.number().optional(),
+  /** Confidence of the body measurement behind this verdict. */
+  confidence: z.number().optional(),
 });
 export type FitDimension = z.infer<typeof FitDimension>;
 
@@ -583,10 +589,14 @@ export const RecommendationView = z.object({
     z.object({
       label: z.string(),
       score: z.number(),
+      /** The size can't close around a girth (too small to wear). */
+      blocked: z.boolean().optional(),
       // Absent on recommendations stored before the try-on view.
       dimensions: z.array(FitDimension).optional(),
     }),
   ),
+  /** Even the largest size can't close. */
+  noSizeFits: z.boolean(),
   explanation: z.string(),
   /** "rules", or "gemini:<model>" when Gemini rewrote the explanation. */
   explanationSource: z.string(),
@@ -648,6 +658,9 @@ export const CreateGarmentRequest = z.object({
   currency: z.string().length(3).default('USD'),
   colorName: z.string().min(2).max(40),
   colorHex: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  /** Optional product photo: an https URL you may use, or a generated image (base64 JPEG). */
+  imageUrl: z.string().url().startsWith('https://').optional(),
+  imageBase64: z.string().max(3_000_000).optional(),
   sizeChart: z.object({
     sizes: z
       .array(
@@ -664,6 +677,28 @@ export type CreateGarmentRequest = z.infer<typeof CreateGarmentRequest>;
 
 export const AdminStatus = z.object({ isAdmin: z.boolean(), geminiEnabled: z.boolean() });
 export type AdminStatus = z.infer<typeof AdminStatus>;
+
+export const ProductPhotoRequest = z.object({
+  name: z.string().min(2).max(80),
+  subcategory: z.string().min(2).max(40),
+  gender: z.enum(['men', 'women', 'unisex']),
+  fitIntent: z.enum(['SLIM', 'REGULAR', 'RELAXED', 'OVERSIZED']),
+  material: z.string().max(120).default(''),
+  description: z.string().max(600).default(''),
+  colorName: z.string().max(40).default(''),
+  colorHex: z.string().max(7).default(''),
+});
+export type ProductPhotoRequest = z.infer<typeof ProductPhotoRequest>;
+
+/** An AI-generated image, returned inline and not stored. */
+export const GeneratedImage = z.object({ imageBase64: z.string(), mimeType: z.string(), model: z.string() });
+export type GeneratedImage = z.infer<typeof GeneratedImage>;
+
+export const PhotoTryOnRequest = z.object({
+  /** The shopper's explicit OK to send their front scan photo to Google Gemini. */
+  consent: z.literal(true),
+});
+export type PhotoTryOnRequest = z.infer<typeof PhotoTryOnRequest>;
 
 // ─────────────────────────── Accuracy check (tape vs scan) ───────────────────
 

@@ -110,6 +110,40 @@ normalised by plain code (inches → cm, single values → ranges meeting halfwa
 centre-back sleeves left out with a warning, garment-measurement charts flagged).
 The API rejects deadlines under 10 s; explanations use 12 s, photos/charts 45 s.
 
+## 4b. Fit engine v2 — sizes that can't close
+
+Found on a real scan (chest 98.7, waist 100.6): a tee recommended **M** with
+the waist 12.6 cm too small, because tops weight the waist at 15%. Now:
+
+* any girth that has to close (chest, waist, hip, thigh) more than 2 cm past
+  the stretch allowance **blocks** the size, whatever its weight — unless the
+  measurement's confidence is below 0.4 (a thigh read through loose trousers);
+* blocked sizes score ≤ 15 and are crossed out "too small" on the size
+  buttons; the explanation names the next size down and why it won't close;
+  if even the largest can't close, it says so (`noSizeFits`);
+* "size up for a looser feel" is suppressed when the chosen size is already
+  loose in a key dimension;
+* every dimension carries **one** number shown everywhere — `outsideCm`, the
+  distance from the size's range — used by the size bars, the try-on labels
+  ("Waist 13 cm too small"), the try-on geometry and Gemini's text;
+* measurements under 0.3 confidence are drawn grey ("unsure") in the try-on,
+  and the Anny fit ignores readings under 0.25 confidence.
+
+## 4c. Product photos and photo try-on
+
+* **Product photos:** `scripts/make-product-photos.py` makes one per garment
+  with `gemini-3.1-flash-lite-image` from its own description, colour and
+  material (no third-party photography to license) →
+  `apps/web/public/garments/<slug>.jpg`, linked by `npm run db:seed`
+  (`Garment.imageUrl`). The add-outfit page can generate one too, or take an
+  https link the admin may use.
+* **Photo try-on** (product page → *Photo try-on*): the shopper's own front scan
+  photo + the product photo → `gemini-nano-banana-2.1` → the shopper wearing
+  it, same face, body, pose and background. Explicit consent checkbox per
+  request (`consent: true` is required by the API); the image is returned
+  inline and never stored. Labelled a style preview: image models always make
+  clothes look good, so fit comes from the fit map.
+
 ## 5. Catalogue
 
 34 outfits, 6 brands (two new: Desi Loom — Indian sizing, Stride — athleisure),
@@ -122,7 +156,7 @@ Admins: `ADMIN_EMAILS`; empty means every signed-in user on a local dev stack.
 
 | Suite | Command | Result |
 |---|---|---|
-| Unit + integration | `cd services/reconstruction && .venv/Scripts/python.exe -m pytest tests/ -q` | 70 passed |
+| Unit + integration | `cd services/reconstruction && .venv/Scripts/python.exe -m pytest tests/ -q` | 78 passed |
 | Backend journey | `npm run smoke` | 23 passed |
 | Product journey | `npm run test:mvp` | 21 passed |
 | Browser | headless Edge screenshots of every page incl. WebGL try-on | rendered as designed |

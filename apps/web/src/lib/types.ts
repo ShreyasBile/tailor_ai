@@ -23,6 +23,7 @@ export type {
   AdminStatus,
   CreateGarmentRequest,
   ReadSizeChartResponse,
+  GeneratedImage,
 } from '@tailorai/contracts';
 
 export const VIEWS = ['front', 'back', 'left', 'right'] as const;

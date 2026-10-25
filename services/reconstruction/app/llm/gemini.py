@@ -64,9 +64,13 @@ _EXPLAIN_SYSTEM = (
     "Write 2–4 short sentences of plain English, no markdown, no lists, no emojis. "
     "Lead with the recommended size and why. Mention the tightest or loosest area if it matters, "
     "in centimetres as given. If betweenSizes is true, say which way to go for a closer or looser fit. "
-    "Talk to the shopper as 'you'. Never quote the JSON field names. roomVersusIdealCm means how much "
-    "more room (positive) or less room (negative) than an ideal fit — say it naturally, e.g. "
-    "'about 6 cm of extra room at the waist'. Don't mention differences under 1 cm."
+    "Talk to the shopper as 'you'. Never quote the JSON field names. outsideSizeRangeCm is how far "
+    "the shopper's measurement falls outside this size's range: positive = the garment is that much "
+    "too small (or too short for sleeve/inseam), negative = that much too big (or too long), 0 = "
+    "inside the range. Say it naturally, e.g. 'about 6 cm bigger than you at the chest'. "
+    "If smallerSizesTooTight is not empty, say briefly why the next size down won't work. "
+    "If noSizeFits is true, say plainly that even this largest size will be too small. "
+    "Don't mention differences under 1 cm."
 )
 
 
@@ -84,13 +88,15 @@ def _explain_facts(result: dict, garment: dict, preference: str) -> dict:
             "stretch": garment.get("stretch"),
         },
         "shopperPreference": preference,
+        "noSizeFits": result.get("noSizeFits", False),
+        "smallerSizesTooTight": result.get("smallerSizesTooTight", []),
         "dimensions": [
             {
                 "area": d.get("label"),
                 "yourMeasurementCm": d.get("body"),
                 "sizeRangeCm": d.get("range"),
                 "verdict": d.get("verdict"),
-                "roomVersusIdealCm": d.get("roomCm"),
+                "outsideSizeRangeCm": d.get("outsideCm", 0),
             }
             for d in result.get("dimensions", [])
         ],
@@ -167,7 +173,96 @@ _PHOTO_MESSAGES = {
 }
 
 
-# ── 3. size-chart reading (admin) ──
+# ── 3. images: product photos and photo try-on ──
+
+# Product photos: fast, single-image text-to-image. Try-on combines two
+# reference images (person + garment), which the main model is built for.
+PRODUCT_IMAGE_MODEL = os.getenv("GEMINI_PRODUCT_IMAGE_MODEL", "gemini-3.1-flash-lite-image")
+TRYON_IMAGE_MODEL = os.getenv("GEMINI_TRYON_IMAGE_MODEL", "gemini-nano-banana-2.1")
+IMAGE_TIMEOUT_S = float(os.getenv("GEMINI_IMAGE_TIMEOUT_S", "90"))
+
+
+def _image_out(interaction) -> tuple[bytes, str]:
+    import base64  # noqa: PLC0415
+
+    img = interaction.output_image
+    return base64.b64decode(img.data), getattr(img, "mime_type", None) or "image/jpeg"
+
+
+def product_photo_prompt(g: dict) -> str:
+    who = {"men": "men's", "women": "women's"}.get(g.get("gender", ""), "unisex")
+    return (
+        f"Studio e-commerce product photo of a {who} {g.get('subcategory', 'garment').lower().rstrip('s')}: "
+        f"\"{g.get('name', '')}\". {g.get('description', '')} Material: {g.get('material', '')}. "
+        f"Colour: {g.get('colorName', '')} ({g.get('colorHex', '')}). {str(g.get('fitIntent', 'regular')).lower()} fit. "
+        "Shown flat-lay, the whole garment in frame, on a plain light grey background, soft even lighting, "
+        "true-to-life colour. No person, no mannequin, no text, no logo, no watermark."
+    )
+
+
+def product_photo(garment: dict, client=None) -> tuple[bytes, str] | None:
+    """A product photo matching the garment's type, colour and description."""
+    if client is None and not enabled():
+        return None
+    try:
+        c = client or _client()
+        it = c.interactions.create(
+            model=PRODUCT_IMAGE_MODEL,
+            input=product_photo_prompt(garment),
+            response_format={"type": "image", "aspect_ratio": "1:1", "image_size": "1K"},
+            timeout=IMAGE_TIMEOUT_S,
+        )
+        return _image_out(it)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("gemini product photo failed: %s", exc)
+        return None
+
+
+_TRYON_PROMPT = (
+    "Image 1 is a person. Image 2 is a garment ({what}). Create a realistic photo of the SAME person from "
+    "image 1 wearing the garment from image 2. Keep their face, hair, skin tone, body shape and proportions, "
+    "pose and the background exactly as in image 1 — do not make them slimmer, taller or more muscular. "
+    "Replace only the clothing the garment covers; keep everything else. The garment keeps its exact colour, "
+    "fabric, collar, sleeves and length from image 2, and drapes naturally on this body. "
+    "Never replace the person with someone else and never invent a face: if image 1 shows a mannequin, "
+    "a 3D figure or a face that is hidden, keep it exactly as it is. "
+    "Same framing and lighting as image 1, no text."
+)
+
+
+def photo_tryon(person: bytes, garment: bytes, garment_mime: str, what: str, client=None) -> tuple[bytes, str] | None:
+    """The person's own photo, wearing the garment. A style preview only: the
+    image model always makes clothes look good, so fit comes from the fit map."""
+    if client is None and not enabled():
+        return None
+    import base64  # noqa: PLC0415
+
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        # Downscale the person photo: detail beyond ~1 MP adds upload time, not quality.
+        img = Image.open(io.BytesIO(person)).convert("RGB")
+        img.thumbnail((1024, 1024))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+        c = client or _client()
+        it = c.interactions.create(
+            model=TRYON_IMAGE_MODEL,
+            input=[
+                {"type": "text", "text": _TRYON_PROMPT.format(what=what)},
+                {"type": "image", "data": base64.b64encode(buf.getvalue()).decode(), "mime_type": "image/jpeg"},
+                {"type": "image", "data": base64.b64encode(garment).decode(), "mime_type": garment_mime},
+            ],
+            response_format={"type": "image", "aspect_ratio": "3:4", "image_size": "1K"},
+            timeout=IMAGE_TIMEOUT_S,
+        )
+        return _image_out(it)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("gemini photo try-on failed: %s", exc)
+        return None
+
+
+# ── 4. size-chart reading (admin) ──
 
 DIMENSIONS = ["chest", "waist", "hip", "shoulder_width", "neck", "arm_length", "inseam", "thigh"]
 

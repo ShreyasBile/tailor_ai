@@ -8,7 +8,7 @@ import { api, ApiError } from '@/lib/api';
 import { confidenceTone, confidenceWord, fmtNumber, relativeDate, type Units } from '@/lib/format';
 import type { AvatarRender, BodyCore, MeasurementDetail, MeasurementsResponse, RecommendationView, UserProfile } from '@/lib/types';
 import { RequireUser } from '@/components/guard';
-import { GarmentArt } from '@/components/garment-art';
+import { ProductImage } from '@/components/garment-art';
 import { Badge, ButtonLink, Card, ConfidenceMeter, EmptyState, Segmented, Spinner, cx } from '@/components/ui';
 import type { Highlight } from '@/components/body-viewer';
 
@@ -211,8 +211,10 @@ function Profile({ user }: { user: UserProfile }) {
                 {recs.slice(0, 6).map((r) => (
                   <li key={r.id}>
                     <Link href={`/shop/${r.garment.slug}`} className="flex items-center gap-4 py-3 transition hover:opacity-80">
-                      <div className="h-14 w-14 shrink-0 rounded-xl bg-paper p-1">
-                        <GarmentArt
+                      <div className={cx('h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-paper', !r.garment.imageUrl && 'p-1')}>
+                        <ProductImage
+                          imageUrl={r.garment.imageUrl}
+                          name={r.garment.name}
                           subcategory={r.garment.subcategory}
                           category={r.garment.category}
                           colorHex={r.garment.colorHex}

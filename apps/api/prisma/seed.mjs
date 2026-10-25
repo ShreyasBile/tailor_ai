@@ -12,9 +12,15 @@
 // each brand runs slightly differently on purpose, so the same body gets
 // different sizes across brands — the point of the product.
 
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
+
+// Product photos made by scripts/make-product-photos.py, served by the web app.
+const PHOTOS = fileURLToPath(new URL('../../web/public/garments/', import.meta.url));
+const photoFor = (slug) => (existsSync(`${PHOTOS}${slug}.jpg`) ? `/garments/${slug}.jpg` : null);
 
 const BRANDS = [
   {
@@ -403,6 +409,7 @@ async function main() {
       colorName,
       colorHex,
       description,
+      imageUrl: photoFor(slug),
       isActive: true,
     };
     await prisma.garment.upsert({ where: { slug }, update: data, create: { slug, ...data } });

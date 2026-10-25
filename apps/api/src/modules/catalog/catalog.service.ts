@@ -14,11 +14,15 @@ import {
   type GarmentCategory,
   type GarmentDetail,
   type GarmentSummary,
+  type GeneratedImage,
   type RecommendationView,
   type SizeChartView,
 } from '@tailorai/contracts';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { loadEnv } from '../../config/env';
+
+const STORAGE_PREFIX = 'storage:';
 
 type GarmentWithBrand = GarmentRow & { brand: BrandRow };
 type RecommendationWithRefs = RecommendationRow & {
@@ -38,6 +42,7 @@ interface FitResult {
   sizes: RecommendationView['sizes'];
   explanation: string;
   explanationSource?: string;
+  noSizeFits?: boolean;
   engineVersion: string;
 }
 
@@ -45,7 +50,87 @@ interface FitResult {
 export class CatalogService {
   private readonly logger = new Logger(CatalogService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
+
+  // ── Product photos ──
+
+  /** A presigned URL for an uploaded product photo (buckets are private). */
+  async imageRedirect(slug: string): Promise<string> {
+    const g = await this.prisma.garment.findUnique({ where: { slug }, select: { imageUrl: true } });
+    if (!g?.imageUrl?.startsWith(STORAGE_PREFIX)) throw new AppError('NOT_FOUND');
+    return (await this.storage.presignGet(g.imageUrl.slice(STORAGE_PREFIX.length), 3600)).url;
+  }
+
+  /** Where a server (the reconstruction service) can fetch the photo from. */
+  private async fetchableImage(slug: string, imageUrl: string): Promise<string> {
+    if (imageUrl.startsWith(STORAGE_PREFIX)) {
+      return (await this.storage.presignGet(imageUrl.slice(STORAGE_PREFIX.length), 600)).url;
+    }
+    if (imageUrl.startsWith('/')) return `${loadEnv().WEB_PUBLIC_URL.replace(/\/$/, '')}${imageUrl}`;
+    void slug;
+    return imageUrl;
+  }
+
+  /**
+   * The shopper's own front scan photo, wearing this garment (Gemini image
+   * model). Explicit consent per request; the image is returned, not stored.
+   * A style preview only — fit and size come from the fit engine.
+   */
+  async photoTryOn(userId: string, slug: string): Promise<GeneratedImage> {
+    const env = loadEnv();
+    if (!env.GEMINI_API_KEY?.trim()) {
+      throw new AppError('GPU_UNAVAILABLE', undefined, 'Photo try-on needs GEMINI_API_KEY.');
+    }
+    const garment = await this.prisma.garment.findUnique({ where: { slug } });
+    if (!garment?.isActive) throw new AppError('NOT_FOUND', { slug }, "We couldn't find that item.");
+    if (!garment.imageUrl) throw new AppError('NOT_FOUND', { slug }, 'This item has no product photo to try on yet.');
+
+    const core = await this.prisma.bodyCore.findFirst({
+      where: { userId, isCurrent: true },
+      orderBy: { version: 'desc' },
+      select: { job: { select: { sessionId: true } } },
+    });
+    const front = core?.job
+      ? await this.prisma.asset.findFirst({
+          where: { sessionId: core.job.sessionId, kind: 'RAW_PHOTO', metadata: { path: ['view'], equals: 'front' } },
+          orderBy: { createdAt: 'desc' },
+        })
+      : null;
+    if (!front || (front.expiresAt && front.expiresAt < new Date())) {
+      throw new AppError('NOT_FOUND', { userId }, 'Your scan photos are no longer stored — rescan to use photo try-on.');
+    }
+
+    const body = {
+      personImageUrl: (await this.storage.presignGet(front.storageKey, 600)).url,
+      garmentImageUrl: await this.fetchableImage(slug, garment.imageUrl),
+      garment: {
+        name: garment.name,
+        subcategory: garment.subcategory,
+        gender: garment.gender,
+        fitIntent: garment.fitIntent,
+        material: garment.material,
+        description: garment.description,
+        colorName: garment.colorName,
+        colorHex: garment.colorHex,
+      },
+    };
+    try {
+      const res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/tryon/photo`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(150_000),
+      });
+      if (!res.ok) throw new Error(`tryon ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return (await res.json()) as GeneratedImage;
+    } catch (err) {
+      this.logger.error(`photo try-on failed: ${String(err)}`);
+      throw new AppError('INFERENCE_FAILED', undefined, "We couldn't create your try-on photo right now. Please try again.");
+    }
+  }
 
   // ── Catalogue ──
 
@@ -220,6 +305,11 @@ export class CatalogService {
       currency: g.currency,
       colorName: g.colorName,
       colorHex: g.colorHex,
+      imageUrl: !g.imageUrl
+        ? null
+        : g.imageUrl.startsWith(STORAGE_PREFIX)
+          ? `${loadEnv().API_PUBLIC_URL.replace(/\/$/, '')}/v1/garments/${g.slug}/image`
+          : g.imageUrl,
     };
   }
 
@@ -259,6 +349,7 @@ export class CatalogService {
       preference: r.preference,
       dimensions: res.dimensions,
       sizes: res.sizes,
+      noSizeFits: res.noSizeFits ?? false,
       explanation: res.explanation,
       explanationSource: res.explanationSource ?? 'rules',
       engineVersion: r.engineVersion,

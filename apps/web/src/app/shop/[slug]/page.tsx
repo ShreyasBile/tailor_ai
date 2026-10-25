@@ -12,10 +12,11 @@ import type {
   FitDimension,
   FitPreference,
   GarmentDetail,
+  GeneratedImage,
   MeasurementsResponse,
   RecommendationView,
 } from '@/lib/types';
-import { GarmentArt, garmentKind } from '@/components/garment-art';
+import { ProductImage, garmentKind } from '@/components/garment-art';
 import { ScoreRing } from '@/components/score-ring';
 import { Badge, Button, ButtonLink, Card, Segmented, Spinner, cx } from '@/components/ui';
 import { DEFAULT_LANDMARKS, FIT_COLORS, type Landmarks } from '@/lib/tryon';
@@ -83,7 +84,7 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [avatar, setAvatar] = useState<AvatarRender | null>(null);
   const [meas, setMeas] = useState<MeasurementsResponse | null>(null);
-  const [view, setView] = useState<'product' | 'tryon'>('product');
+  const [view, setView] = useState<'product' | 'tryon' | 'photo'>('product');
   const [mode, setMode] = useState<TryOnMode>('fit');
 
   // The body to try clothes on.
@@ -177,15 +178,16 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
         {/* product — min-w-0 lets the size-chart table scroll inside its card
             instead of widening the grid column past a phone's screen */}
         <div className="min-w-0">
-          {canTryOn && (
+          {(canTryOn || (user && g.imageUrl)) && (
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <Segmented
                 size="sm"
                 value={view}
                 onChange={setView}
                 options={[
-                  { value: 'tryon', label: 'Try it on' },
-                  { value: 'product', label: 'Product' },
+                  ...(canTryOn ? [{ value: 'tryon' as const, label: 'Fit on my body' }] : []),
+                  ...(user && g.imageUrl ? [{ value: 'photo' as const, label: 'Photo try-on' }] : []),
+                  { value: 'product' as const, label: 'Product' },
                 ]}
               />
               {view === 'tryon' && (
@@ -222,15 +224,25 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
               </div>
               {mode === 'fit' && <FitLegend />}
             </Card>
+          ) : view === 'photo' && user && g.imageUrl ? (
+            <PhotoTryOn slug={g.slug} garmentName={g.name} imageUrl={g.imageUrl} />
           ) : (
-            <Card className="aspect-square overflow-hidden bg-gradient-to-b from-[#fbfaf6] to-[#efece4] p-12">
-              <GarmentArt subcategory={g.subcategory} category={g.category} colorHex={g.colorHex} className="h-full w-full" />
+            <Card className={cx('aspect-square overflow-hidden bg-gradient-to-b from-[#fbfaf6] to-[#efece4]', !g.imageUrl && 'p-12')}>
+              <ProductImage
+                imageUrl={g.imageUrl}
+                name={g.name}
+                subcategory={g.subcategory}
+                category={g.category}
+                colorHex={g.colorHex}
+                className="h-full w-full"
+              />
             </Card>
           )}
           {view === 'tryon' && canTryOn && (
             <p className="mt-2 text-xs text-ink-muted">
               Your scanned body wearing size {selectedSize ?? rec?.recommendedSize}. Pick another size on the right to
-              compare. Colours show room at each zone; lengths show where hems and cuffs land.
+              compare. Colours show how each zone compares with this size; grey means the scan wasn&apos;t sure of that
+              measurement — rescan in fitted clothes.
             </p>
           )}
           <Card className="mt-6 p-6">
@@ -397,6 +409,7 @@ function Result({
               {titleCase(rec.confidence.label)} confidence
             </Badge>
             {rec.betweenSizes && rec.alternativeSize && <Badge tone="warn">Between sizes</Badge>}
+            {rec.noSizeFits && <Badge tone="bad">No size fits</Badge>}
           </div>
         </div>
       </div>
@@ -424,9 +437,11 @@ function Result({
                   : 'border-line bg-white text-ink-soft hover:border-ink-faint',
             )}
           >
-            <span className="text-sm font-semibold">{s.label}</span>
-            <span className={cx('text-[11px]', s.label === rec.recommendedSize ? 'text-paper/70' : 'text-ink-muted')}>
-              {s.score}
+            <span className={cx('text-sm font-semibold', s.blocked && s.label !== rec.recommendedSize && 'text-ink-faint line-through')}>
+              {s.label}
+            </span>
+            <span className={cx('text-[11px]', s.label === rec.recommendedSize ? 'text-paper/70' : s.blocked ? 'text-bad' : 'text-ink-muted')}>
+              {s.blocked && s.label !== rec.recommendedSize ? 'too small' : s.score}
             </span>
           </button>
         ))}
@@ -509,12 +524,80 @@ function DimensionBar({ d, units }: { d: FitDimension; units: Units }) {
   );
 }
 
+/**
+ * The shopper's own scan photo wearing this item, made by Gemini on request.
+ * Asks first: the photo leaves this app. The result is shown, never stored.
+ */
+function PhotoTryOn({ slug, garmentName, imageUrl }: { slug: string; garmentName: string; imageUrl: string }) {
+  const [agreed, setAgreed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [image, setImage] = useState<GeneratedImage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setError(null);
+    try {
+      setImage(await api<GeneratedImage>(`/garments/${slug}/photo-tryon`, { method: 'POST', body: { consent: true } }));
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (image) {
+    return (
+      <Card className="overflow-hidden p-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={`data:${image.mimeType};base64,${image.imageBase64}`} alt={`You wearing the ${garmentName}`} className="w-full" />
+        <div className="flex flex-wrap items-center justify-between gap-2 p-4">
+          <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-ink-muted">
+            <Info className="mt-0.5 h-3 w-3 shrink-0" /> AI-generated preview ({image.model}) for style only — it always
+            makes clothes look good. Your size and fit come from the fit map. Not saved.
+          </p>
+          <Button variant="secondary" size="sm" loading={busy} onClick={run}>
+            Try again
+          </Button>
+        </div>
+      </Card>
+    );
+  }
+  return (
+    <Card className="p-6">
+      <div className="flex gap-4">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={imageUrl} alt={garmentName} className="h-28 w-28 shrink-0 rounded-xl object-cover" />
+        <div>
+          <h3 className="font-semibold">See yourself in it</h3>
+          <p className="mt-1 text-sm text-ink-soft">
+            Gemini puts this {garmentName} on the front photo from your scan — your face, body and background stay the
+            same. Takes about 20 seconds.
+          </p>
+        </div>
+      </div>
+      <label className="mt-5 flex items-start gap-2.5 rounded-xl bg-paper p-3 text-sm">
+        <input type="checkbox" className="mt-1" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+        <span className="text-ink-soft">
+          I agree to send my front scan photo to Google Gemini to make this image. It is used once, shown here, and not
+          stored by TailorAI.
+        </span>
+      </label>
+      {error && <p className="mt-3 text-sm text-bad">{error}</p>}
+      <Button variant="accent" size="lg" className="mt-4 w-full" disabled={!agreed} loading={busy} onClick={run}>
+        <Sparkles className="h-4 w-4" /> Create my try-on photo
+      </Button>
+    </Card>
+  );
+}
+
 function FitLegend() {
   const items: [string, string][] = [
     [FIT_COLORS.tight, 'Too tight'],
     [FIT_COLORS.snug, 'Snug'],
     [FIT_COLORS.good, 'Good'],
     [FIT_COLORS.loose, 'Loose'],
+    [FIT_COLORS.unsure, 'Unsure measurement'],
   ];
   return (
     <div className="pointer-events-none absolute bottom-14 left-4 flex flex-col gap-1 rounded-xl border border-line bg-white/90 px-3 py-2 text-[11px] shadow-soft">

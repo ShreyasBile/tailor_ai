@@ -530,6 +530,9 @@ model Garment {
   currency    String  @default("USD")
   colorName   String
   colorHex    String
+  /// Product photo: a web path ("/garments/x.jpg", served by the web app),
+  /// an https URL, or "storage:<key>" (uploaded, served via the API).
+  imageUrl    String?
   isActive    Boolean @default(true)
 
   recommendations Recommendation[]

@@ -99,3 +99,47 @@ def test_between_sizes_is_flagged_and_explained():
 def test_no_overlapping_dimensions_is_an_error():
     with pytest.raises(ValueError):
         recommend({"inseam": 80}, TEE, TOPS)
+
+
+# ── a girth that can't close rules a size out, whatever its weight ──
+
+APPLE = {  # chest fits M, waist only fits XL (a real scan)
+    "chest": {"value": 98.7, "confidence": 0.82},
+    "waist": {"value": 100.6, "confidence": 0.75},
+    "shoulder_width": {"value": 37.7, "confidence": 0.7},
+}
+
+
+def test_waist_that_cannot_close_rules_out_smaller_sizes():
+    r = recommend(APPLE, TEE, TOPS)
+    assert r["recommendedSize"] == "XL"  # not M: M is 12.6 cm too small at the waist
+    blocked = {s["label"] for s in r["sizes"] if s["blocked"]}
+    assert {"S", "M", "L"} <= blocked
+    # A size that won't close never out-scores the recommendation.
+    best = next(s for s in r["sizes"] if s["label"] == "XL")["score"]
+    assert all(s["score"] <= best for s in r["sizes"] if s["blocked"])
+    assert r["smallerSizesTooTight"][-1]["size"] == "L"
+    assert "L would be" in r["explanation"] and "waist" in r["explanation"]
+    assert not r["betweenSizes"]  # XL is already loose at the chest — no "size up" advice
+
+
+def test_low_confidence_girth_cannot_block():
+    # A thigh read through loose trousers (confidence 0.14) must not force a size.
+    body = {"waist": 81, "hip": 99, "inseam": 81, "thigh": {"value": 74.0, "confidence": 0.14}}
+    jeans = [{"label": l, "measurements": {**s["measurements"], "thigh": (54 + 2 * i, 57 + 2 * i)}}
+             for i, (l, s) in enumerate((x["label"], x) for x in JEANS)]
+    r = recommend(body, {"category": "bottoms", "fitIntent": "regular", "stretch": "low"}, jeans)
+    assert r["recommendedSize"] == "32"
+
+
+def test_nothing_fits_is_said_plainly():
+    r = recommend({"chest": 125, "waist": 118}, TEE, TOPS)
+    assert r["noSizeFits"] and r["recommendedSize"] == "XL"
+    assert r["explanation"].startswith("Even the largest size")
+
+
+def test_outside_cm_is_the_distance_from_the_range():
+    r = recommend(APPLE, TEE, TOPS)
+    xl = {d["name"]: d for d in r["dimensions"]}
+    assert xl["chest"]["outsideCm"] == pytest.approx(98.7 - 110, abs=0.05)  # under the range: too big
+    assert xl["waist"]["outsideCm"] == 0
