@@ -85,7 +85,7 @@ export class AdminService {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
         body: JSON.stringify({ garment: req }),
-        signal: AbortSignal.timeout(120_000),
+        signal: AbortSignal.timeout(270_000),
       });
     } catch (err) {
       this.logger.error(`product photo failed: ${String(err)}`);

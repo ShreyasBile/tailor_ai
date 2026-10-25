@@ -122,7 +122,8 @@ export class CatalogService {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(150_000),
+        // Two image attempts of up to 120 s each in the reconstruction service.
+        signal: AbortSignal.timeout(270_000),
       });
       if (!res.ok) throw new Error(`tryon ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return (await res.json()) as GeneratedImage;

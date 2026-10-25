@@ -146,20 +146,19 @@ def test_photo_check_needs_explicit_opt_in(monkeypatch):
 
 
 class FakeImages:
-    """Stands in for client.interactions (the image API)."""
+    """Stands in for client.models.generate_content returning an image."""
 
-    def __init__(self, data=b"\xff\xd8jpeg", error=None):
-        import base64
-
+    def __init__(self, data=b"\xff\xd8jpeg", errors=()):
         self.calls = []
-        self._out, self._error = base64.b64encode(data).decode(), error
-        self.interactions = self
+        self._data, self._errors = data, list(errors)
+        self.models = self
 
-    def create(self, **kw):
-        self.calls.append(kw)
-        if self._error:
-            raise self._error
-        return SimpleNamespace(output_image=SimpleNamespace(data=self._out, mime_type="image/jpeg"))
+    def generate_content(self, model, contents, config):
+        self.calls.append({"model": model, "contents": contents, "config": config})
+        if self._errors:
+            raise self._errors.pop(0)
+        part = SimpleNamespace(inline_data=SimpleNamespace(data=self._data, mime_type="image/jpeg"))
+        return SimpleNamespace(candidates=[SimpleNamespace(content=SimpleNamespace(parts=[part]))])
 
 
 KURTA = {"name": "Handloom Cotton Kurta", "subcategory": "Kurtas", "gender": "men", "fitIntent": "REGULAR",
@@ -173,12 +172,15 @@ def test_product_photo_prompt_describes_the_garment_only():
     assert "No person" in p and "no logo" in p
 
 
-def test_product_photo_uses_the_product_model():
+def test_product_photo_uses_the_product_model_with_a_long_deadline():
     fake = FakeImages()
     data, mime = gemini.product_photo(KURTA, client=fake)
     assert data == b"\xff\xd8jpeg" and mime == "image/jpeg"
-    assert fake.calls[0]["model"] == gemini.PRODUCT_IMAGE_MODEL
-    assert fake.calls[0]["response_format"]["type"] == "image"
+    call = fake.calls[0]
+    assert call["model"] == gemini.PRODUCT_IMAGE_MODEL
+    assert call["config"].response_modalities == ["IMAGE"]
+    # The API cut short-deadline image calls off at ~13 s; real photos need more.
+    assert call["config"].http_options.timeout >= 60_000
 
 
 def test_photo_tryon_sends_person_then_garment_and_keeps_the_body():
@@ -191,17 +193,24 @@ def test_photo_tryon_sends_person_then_garment_and_keeps_the_body():
     fake = FakeImages()
     out = gemini.photo_tryon(buf.getvalue(), b"\xff\xd8garment", "image/jpeg", "Saffron kurta", client=fake)
     assert out is not None
-    parts = fake.calls[0]["input"]
-    assert [p["type"] for p in parts] == ["text", "image", "image"]
-    assert "do not make them slimmer" in parts[0]["text"]
+    text, person, garment = fake.calls[0]["contents"]
+    assert "do not make them slimmer" in text and "never invent a face" in text
     assert fake.calls[0]["model"] == gemini.TRYON_IMAGE_MODEL
+    assert fake.calls[0]["config"].image_config.aspect_ratio == "3:4"
     # The person photo is downscaled before it leaves the service.
-    import base64
-
-    sent = Image.open(BytesIO(base64.b64decode(parts[1]["data"])))
+    sent = Image.open(BytesIO(person.inline_data.data))
     assert max(sent.size) <= 1024
+    assert garment.inline_data.data == b"\xff\xd8garment"
+
+
+def test_transient_server_error_is_retried_once():
+    fake = FakeImages(errors=[RuntimeError("504 DEADLINE_EXCEEDED")])
+    assert gemini.product_photo(KURTA, client=fake) is not None
+    assert len(fake.calls) == 2
+    fake = FakeImages(errors=[RuntimeError("504"), RuntimeError("504")])
+    assert gemini.product_photo(KURTA, client=fake) is None
 
 
 def test_image_failures_return_none():
-    assert gemini.product_photo(KURTA, client=FakeImages(error=TimeoutError())) is None
+    assert gemini.product_photo(KURTA, client=FakeImages(errors=[ValueError("400 bad")])) is None
     assert gemini.photo_tryon(b"not an image", b"x", "image/jpeg", "x", client=FakeImages()) is None

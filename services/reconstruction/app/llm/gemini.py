@@ -179,14 +179,33 @@ _PHOTO_MESSAGES = {
 # reference images (person + garment), which the main model is built for.
 PRODUCT_IMAGE_MODEL = os.getenv("GEMINI_PRODUCT_IMAGE_MODEL", "gemini-3.1-flash-lite-image")
 TRYON_IMAGE_MODEL = os.getenv("GEMINI_TRYON_IMAGE_MODEL", "gemini-nano-banana-2.1")
-IMAGE_TIMEOUT_S = float(os.getenv("GEMINI_IMAGE_TIMEOUT_S", "90"))
+# A real photo can take a minute. generate_content honours this deadline; the
+# Interactions API cut every image call off at ~13 s (504 DEADLINE_EXCEEDED).
+IMAGE_TIMEOUT_MS = int(float(os.getenv("GEMINI_IMAGE_TIMEOUT_S", "120")) * 1000)
 
 
-def _image_out(interaction) -> tuple[bytes, str]:
-    import base64  # noqa: PLC0415
+def _generate_image(client, model: str, contents: list, aspect: str) -> tuple[bytes, str]:
+    """One image from generate_content; one retry on a transient server error."""
+    from google.genai import types  # noqa: PLC0415
 
-    img = interaction.output_image
-    return base64.b64decode(img.data), getattr(img, "mime_type", None) or "image/jpeg"
+    config = types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(aspect_ratio=aspect, image_size="1K"),
+        http_options=types.HttpOptions(timeout=IMAGE_TIMEOUT_MS),
+    )
+    last: Exception | None = None
+    for _attempt in range(2):
+        try:
+            resp = client.models.generate_content(model=model, contents=contents, config=config)
+            for part in resp.candidates[0].content.parts:
+                if part.inline_data and part.inline_data.data:
+                    return part.inline_data.data, part.inline_data.mime_type or "image/jpeg"
+            raise RuntimeError("no image in the response (it may have been blocked)")
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if not any(code in str(exc) for code in ("500", "502", "503", "504", "DEADLINE", "UNAVAILABLE")):
+                break
+    raise last  # type: ignore[misc]
 
 
 def product_photo_prompt(g: dict) -> str:
@@ -205,14 +224,7 @@ def product_photo(garment: dict, client=None) -> tuple[bytes, str] | None:
     if client is None and not enabled():
         return None
     try:
-        c = client or _client()
-        it = c.interactions.create(
-            model=PRODUCT_IMAGE_MODEL,
-            input=product_photo_prompt(garment),
-            response_format={"type": "image", "aspect_ratio": "1:1", "image_size": "1K"},
-            timeout=IMAGE_TIMEOUT_S,
-        )
-        return _image_out(it)
+        return _generate_image(client or _client(), PRODUCT_IMAGE_MODEL, [product_photo_prompt(garment)], "1:1")
     except Exception as exc:  # noqa: BLE001
         log.warning("gemini product photo failed: %s", exc)
         return None
@@ -235,28 +247,23 @@ def photo_tryon(person: bytes, garment: bytes, garment_mime: str, what: str, cli
     image model always makes clothes look good, so fit comes from the fit map."""
     if client is None and not enabled():
         return None
-    import base64  # noqa: PLC0415
-
     try:
-        from PIL import Image  # noqa: PLC0415
+        from google.genai import types  # noqa: PLC0415
+        from PIL import Image, ImageOps  # noqa: PLC0415
 
-        # Downscale the person photo: detail beyond ~1 MP adds upload time, not quality.
-        img = Image.open(io.BytesIO(person)).convert("RGB")
+        # Upright (phone EXIF) and downscaled: detail beyond ~1 MP adds upload
+        # and generation time, not quality.
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(person))).convert("RGB")
         img.thumbnail((1024, 1024))
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=88)
-        c = client or _client()
-        it = c.interactions.create(
-            model=TRYON_IMAGE_MODEL,
-            input=[
-                {"type": "text", "text": _TRYON_PROMPT.format(what=what)},
-                {"type": "image", "data": base64.b64encode(buf.getvalue()).decode(), "mime_type": "image/jpeg"},
-                {"type": "image", "data": base64.b64encode(garment).decode(), "mime_type": garment_mime},
-            ],
-            response_format={"type": "image", "aspect_ratio": "3:4", "image_size": "1K"},
-            timeout=IMAGE_TIMEOUT_S,
-        )
-        return _image_out(it)
+        aspect = "3:4" if img.height >= img.width else "4:3"
+        contents = [
+            _TRYON_PROMPT.format(what=what),
+            types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
+            types.Part.from_bytes(data=garment, mime_type=garment_mime),
+        ]
+        return _generate_image(client or _client(), TRYON_IMAGE_MODEL, contents, aspect)
     except Exception as exc:  # noqa: BLE001
         log.warning("gemini photo try-on failed: %s", exc)
         return None
