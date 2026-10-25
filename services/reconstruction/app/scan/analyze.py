@@ -35,7 +35,31 @@ def _for_analysis(image: np.ndarray) -> tuple[np.ndarray, float]:
     return cv2.resize(image, (round(w * s), round(h * s)), interpolation=cv2.INTER_CUBIC), s
 
 
-def analyze(images: dict[str, np.ndarray], height_cm: float, fit_body: bool = True) -> dict:
+def use_anny() -> bool:
+    """The Anny body unless switched off (SCAN_BODY_MODEL=humanoid) or not
+    installed — then the parametric humanoid, as before."""
+    import os  # noqa: PLC0415
+
+    if os.getenv("SCAN_BODY_MODEL", "anny").lower() == "humanoid":
+        return False
+    from ..bodymodel import anny_body  # noqa: PLC0415
+
+    return anny_body.available()
+
+
+def _fit_anny(meas: dict, height_cm: float, sex: str | None) -> dict:
+    from . import anny_fit  # noqa: PLC0415
+
+    targets = {
+        k: anny_fit.Target(m.value, m.confidence, m.region.get("y"))
+        for k, m in meas.items()
+        if k != "height"
+    }
+    return anny_fit.fit(targets, height_cm, sex=sex).to_dict()
+
+
+def analyze(images: dict[str, np.ndarray], height_cm: float, fit_body: bool = True,
+            sex: str | None = None) -> dict:
     started = time.perf_counter()
     missing = [v for v in REQUIRED_VIEWS if v not in images]
 
@@ -87,8 +111,15 @@ def analyze(images: dict[str, np.ndarray], height_cm: float, fit_body: bool = Tr
     }
 
     if fit_body:
-        fit = body_fit.fit({k: m.value for k, m in meas.items()}, height_cm)
-        result["body"] = fit.to_dict()
+        body = None
+        if use_anny():
+            try:
+                body = _fit_anny(meas, height_cm, sex)
+            except Exception as exc:  # noqa: BLE001 — a body is still owed
+                log.warning("Anny fit failed, using the parametric humanoid: %s", exc)
+        if body is None:
+            body = body_fit.fit({k: m.value for k, m in meas.items()}, height_cm).to_dict()
+        result["body"] = body
 
     result["elapsedMs"] = int((time.perf_counter() - started) * 1000)
     result = _plain(result)

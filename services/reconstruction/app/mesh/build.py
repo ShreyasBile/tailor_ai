@@ -31,7 +31,12 @@ THUMBNAIL_SIZE = 512
 def build_mesh(req: BuildMeshRequest) -> BuildMeshResponse:
     started = time.perf_counter()
 
-    mesh = build_humanoid(req.shape, req.metricScale)
+    if req.bodyModel == "ANNY":
+        from ..bodymodel import anny_body  # noqa: PLC0415 — torch import is heavy
+
+        mesh = anny_body.build(req.shape, req.metricScale)
+    else:
+        mesh = build_humanoid(req.shape, req.metricScale)
 
     if len(mesh.vertices) == 0 or len(mesh.faces) == 0:
         raise mesh_invalid("generated mesh is empty")

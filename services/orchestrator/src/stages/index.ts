@@ -229,6 +229,7 @@ const s3bScan: Stage = {
         ),
       ),
       fitBody: true,
+      sexAtBirth: ctx.state.sexAtBirth,
     });
 
     // Saved whether accepted or not: on rejection it is how the app tells the
@@ -338,6 +339,10 @@ const s6Fuse: Stage = {
     const body = ctx.state.scan?.body;
     if (body) {
       ctx.state.shape = body.shape;
+      if (body.bodyModel) {
+        ctx.state.bodyModel = body.bodyModel;
+        ctx.state.bodyModelVersion = body.bodyModelVersion ?? ctx.state.bodyModelVersion;
+      }
       ctx.state.scale = {
         source: 'USER_HEIGHT',
         heightCm: ctx.state.userHeightCm,
@@ -573,6 +578,7 @@ async function buildMesh(ctx: StageContext, textureKey: string | null): Promise<
     jobId: ctx.jobId,
     shape: ctx.state.shape,
     metricScale: ctx.state.scale?.metricScale ?? 1,
+    bodyModel: ctx.state.bodyModel,
     textureUrl: textureKey ? await ctx.storage.presignGet(textureKey, PRESIGN_TTL) : null,
     outputGlbUrl: await ctx.storage.presignPut(glbKey, 'model/gltf-binary', PRESIGN_TTL),
     outputObjUrl: await ctx.storage.presignPut(objKey, 'application/zip', PRESIGN_TTL),

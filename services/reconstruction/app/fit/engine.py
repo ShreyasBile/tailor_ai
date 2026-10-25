@@ -209,8 +209,11 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
         "betweenSizes": between,
         "confidence": {"value": round(confidence, 2), "label": _conf_label(confidence)},
         "dimensions": [r.to_dict() for r in sorted(best["dims"], key=lambda r: -r.weight)],
-        "sizes": [{"label": s["label"], "score": round(100 * s["score"])} for s in
-                  sorted(sizes, key=lambda s: order.get(s["label"], 0))],
+        # Per-size dimension detail lets the try-on view switch sizes without
+        # another round trip.
+        "sizes": [{"label": s["label"], "score": round(100 * s["score"]),
+                   "dimensions": [r.to_dict() for r in sorted(s["dims"], key=lambda r: -r.weight)]}
+                  for s in sorted(sizes, key=lambda s: order.get(s["label"], 0))],
         "explanation": _explain(best, second, between, preference, fit_intent, stretch, order),
         "engineVersion": "fit-rules-v1",
     }

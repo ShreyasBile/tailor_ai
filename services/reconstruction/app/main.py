@@ -28,6 +28,7 @@ from .runtime.vram import gpu_info
 from .schemas import (
     FitRecommendRequest,
     ProcessScanRequest,
+    ReadSizeChartRequest,
     ScanAnalyzeRequest,
     MeasureRequest,
     MeasureResponse,
@@ -91,6 +92,17 @@ async def lifespan(app: FastAPI):
         scan_pose.warmup()
         _state["ready"] = True
         log.info("adapters warm (incl. scan pose model)")
+
+        # The Anny body loads in the background: its first-ever load builds an
+        # on-disk cache (~90 s) and must not hold up the health check.
+        from .scan import analyze as scan_analyze_mod
+
+        if scan_analyze_mod.use_anny():
+            import threading
+
+            from .bodymodel import anny_body
+
+            threading.Thread(target=anny_body.warmup, name="anny-warmup", daemon=True).start()
     except Exception as exc:  # noqa: BLE001
         _state["ready"] = False
         log.error("warmup failed: %s", exc)
@@ -299,15 +311,22 @@ def scan_analyze(req: ScanAnalyzeRequest) -> dict:
     from .scan.analyze import analyze
 
     images = {v.view: fetch_image(v.imageUrl) for v in req.views}
-    return analyze(images, req.heightCm, fit_body=req.fitBody)
+    result = analyze(images, req.heightCm, fit_body=req.fitBody, sex=req.sexAtBirth)
+    if result["status"] == "accepted":
+        from .llm import gemini
+
+        # Advisory only: warnings that explain a likely-inflated girth, never a rejection.
+        result["issues"].extend(gemini.check_photos(images) or [])
+    return result
 
 
 @app.post("/fit/recommend", dependencies=[Depends(require_api_key)])
 def fit_recommend(req: FitRecommendRequest) -> dict:
     from .fit.engine import recommend
+    from .llm import gemini
 
     try:
-        return recommend(
+        result = recommend(
             req.body,
             req.garment.model_dump(),
             [r.model_dump() for r in req.sizeChart],
@@ -315,6 +334,35 @@ def fit_recommend(req: FitRecommendRequest) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": "FIT_UNAVAILABLE", "message": str(exc)}) from exc
+
+    friendly = gemini.explain_fit(result, req.garment.model_dump(), req.preference)
+    if friendly:
+        result["explanationRules"] = result["explanation"]
+        result["explanation"] = friendly
+        result["explanationSource"] = f"gemini:{gemini.TEXT_MODEL}"
+    return result
+
+
+@app.post("/catalog/read-size-chart", dependencies=[Depends(require_api_key)])
+def read_size_chart(req: ReadSizeChartRequest) -> dict:
+    """Gemini transcribes a brand's size-chart image into the shop's form."""
+    import base64
+    import binascii
+
+    from .llm import gemini
+
+    if not gemini.enabled():
+        raise HTTPException(status_code=503, detail={"code": "GEMINI_DISABLED",
+                                                     "message": "Set GEMINI_API_KEY to read size charts."})
+    try:
+        image = base64.b64decode(req.imageBase64, validate=True)
+    except binascii.Error as exc:
+        raise HTTPException(status_code=400, detail={"code": "BAD_IMAGE", "message": "Not valid base64."}) from exc
+    result = gemini.read_size_chart(image, req.mimeType)
+    if result is None or not result["sizes"]:
+        raise HTTPException(status_code=422, detail={"code": "CHART_UNREADABLE",
+                                                     "message": "Couldn't find a size table in that image."})
+    return result
 
 
 @app.post("/process-scan", dependencies=[Depends(require_api_key)])

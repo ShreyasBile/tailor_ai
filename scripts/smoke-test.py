@@ -25,7 +25,20 @@ import numpy as np
 # Windows consoles default to cp1252, which can't encode the ▸/✔ glyphs below.
 sys.stdout.reconfigure(encoding="utf-8")
 
-API = "http://127.0.0.1:3000/v1"
+def _api_base() -> str:
+    """TAILORAI_API, else API_PORT from the repo's .env (another local app may
+    hold 3000), else 3000."""
+    import os  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    if os.getenv("TAILORAI_API"):
+        return os.environ["TAILORAI_API"].rstrip("/")
+    env = Path(__file__).resolve().parents[1] / ".env"
+    m = re.search(r"^API_PORT=(\d+)", env.read_text(encoding="utf-8"), re.M) if env.exists() else None
+    return f"http://127.0.0.1:{m.group(1) if m else 3000}/v1"
+
+
+API = _api_base()
 
 # A fresh user per run. The consent gate can only be exercised on an account
 # that has not yet consented, and a test that passes only against a virgin

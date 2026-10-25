@@ -2,7 +2,7 @@
   "name": "@tailorai/web",
   "version": "0.1.0",
   "private": true,
-  "description": "TailorAI web app — four-photo body scan, Body Profile and Find My Size",
+  "description": "TailorAI web app â€” four-photo body scan, Body Profile and Find My Size",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
@@ -13,18 +13,18 @@
     "@react-three/drei": "10.0.4",
     "@react-three/fiber": "9.0.4",
     "lucide-react": "0.469.0",
-    "next": "15.1.7",
-    "react": "19.0.0",
-    "react-dom": "19.0.0",
+    "next": "15.5.28",
+    "react": "19.0.9",
+    "react-dom": "19.0.9",
     "three": "0.172.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "@types/react": "19.0.8",
-    "@types/react-dom": "19.0.3",
+    "@types/react": "19.0.14",
+    "@types/react-dom": "19.0.6",
     "@types/three": "0.172.0",
     "autoprefixer": "10.4.20",
-    "postcss": "8.4.49",
+    "postcss": "8.5.31",
     "tailwindcss": "3.4.17",
     "typescript": "^5.7.2"
   }

@@ -4,17 +4,73 @@ How to run, verify, and extend the system on this machine.
 
 ---
 
+## Quick start — Windows, no Docker or WSL
+
+For a laptop where Docker/WSL can't run (e.g. CPU virtualisation off in the
+BIOS). Everything runs natively; nothing needs admin rights.
+
+| Piece | What runs |
+|---|---|
+| Postgres | a project-local cluster in `.data\pg`, port **5433**, made with the installed PostgreSQL 17 binaries (`initdb`) — the system service on 5432 is untouched |
+| Redis | portable Windows build in `.data\bin\redis-dl\…` |
+| Object storage | **SeaweedFS** (`.data\bin\weed.exe`), S3 API on 9000 — MinIO no longer publishes free binaries |
+| API | port **3002** (`API_PORT` in `.env`; 3000 is taken by another local app) |
+
+**Start / stop:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start-windows.ps1
+powershell -ExecutionPolicy Bypass -File scripts\start-windows.ps1 -Stop
+```
+
+Then open http://localhost:3001.
+
+**First-time setup** (already done on this machine):
+
+```powershell
+npm install
+py -3.12 -m venv services\reconstruction\.venv        # mediapipe needs Python ≤ 3.12
+services\reconstruction\.venv\Scripts\python.exe -m pip install -r services\reconstruction\requirements.txt
+services\reconstruction\.venv\Scripts\python.exe -m pip install --no-deps -r services\reconstruction\requirements-scan.txt
+services\reconstruction\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+services\reconstruction\.venv\Scripts\python.exe -m pip install -r services\reconstruction\requirements-anny.txt
+& "C:\Program Files\PostgreSQL\17\bin\initdb.exe" -D .data\pg -U tailorai -W -E UTF8 --locale=C   # password: tailorai_dev_password
+# start Postgres once (start-windows.ps1 does it), then:
+& "C:\Program Files\PostgreSQL\17\bin\createdb.exe" -h localhost -p 5433 -U tailorai tailorai
+$env:DATABASE_URL="postgresql://tailorai:tailorai_dev_password@localhost:5433/tailorai?schema=public"
+npm run db:deploy -w @tailorai/api ; npm run db:seed ; npm run build
+```
+
+Gotchas found while setting this up:
+
+* `.env` needs `CORS_ORIGINS` to include `http://localhost:3001` (the web app).
+* The web app bakes its API address in at build time: build it with
+  `NEXT_PUBLIC_API_BASE=http://localhost:3002/v1`.
+* `AWS_REQUEST_CHECKSUM_CALCULATION=WHEN_REQUIRED` in `.env` is required with
+  SeaweedFS — otherwise the AWS SDK signs an empty-body checksum into upload
+  URLs and every photo upload fails with 400.
+* PyPI downloads stalled on this network over IPv6; `curl -4` fixed it.
+* Anny's first-ever load builds a cache in `~\.cache\anny` (~90 s); after that
+  it loads in under a second.
+
+What's new on top of the MVP — Anny body, try-on, accuracy page, Gemini,
+add-outfit page — is in [docs/08](docs/08-realistic-body-tryon-gemini.md).
+
+---
+
 ## 0. What state the project is in
 
 | Component | Status |
 |---|---|
 | Monorepo, contracts, licence gate | ✅ gate verified in both directions |
-| API gateway (NestJS) | ✅ **running**, serving against live Postgres + Redis + MinIO |
-| Orchestrator (job state machine) | ✅ **running**, jobs complete in ~14 s |
-| Reconstruction service (Python) | ✅ **running**, 25 unit/integration tests pass |
-| Mobile app (Expo) | ✅ built, typechecks — **not yet run on a device** |
-| Full-stack smoke test | ✅ **23/23**, repeatable |
-| Docker infra | ⚠️ broken on this machine — **WSL2 path used instead** |
+| API gateway (NestJS) | ✅ **running** on 3002 (Windows native stack) |
+| Orchestrator (job state machine) | ✅ **running**, a four-photo scan completes in ~80 s on CPU |
+| Reconstruction service (Python) | ✅ **running**, 70 unit/integration tests pass |
+| 3D body | ✅ Anny, fitted to all 11 measurements ([08 §1](docs/08-realistic-body-tryon-gemini.md)) |
+| Web app (Next.js 15.5) | ✅ scan, profile, shop (34 outfits), try-on, accuracy, add-outfit — checked in headless Edge |
+| Mobile app (Flutter) | ⚠️ **not yet run on a device**, and not rebuilt since the port change — Flutter isn't installed on this PC |
+| Full-stack tests | ✅ `npm run smoke` 23/23 · `npm run test:mvp` 21/21 |
+| Docker / WSL infra | ⚠️ unavailable on this machine — **use the Windows quick start above** |
 
 The whole backend has been executed end to end. A user journey — sign in,
 consent, upload, reconstruct, download — runs against real HTTP, a real
@@ -206,29 +262,40 @@ npm run app:apk
 
 ### Networking
 
-The app talks to the same backend, over the LAN, at `http://192.168.1.22:3000`
-by default (`lib/core/config.dart`). The phone must be on the **same Wi-Fi** as
-this PC, and the repo-root `.env` `S3_ENDPOINT` must also be `192.168.1.22`
-(presigned storage URLs are handed to the device, so the 3D viewer loads its GLB
-from there too).
+The app talks to the same backend over the Wi-Fi, at `http://10.221.15.232:3002`
+by default (`lib/core/config.dart`; the API is on 3002 because another local
+app holds 3000). That address belongs to this PC on today's network — check
+`ipconfig` and pass `--dart-define=API_BASE=http://<ip>:3002` if it changed.
+
+On the Windows native stack, storage only listens on this PC by default. For a
+phone, set in the repo-root `.env`:
+
+```
+PHONE_MODE=true
+S3_ENDPOINT=http://<this PC's Wi-Fi IP>:9000
+```
+
+and restart (`scripts\start-windows.ps1 -Stop`, then start). Presigned storage
+URLs are handed to the device, so the 3D viewer loads its GLB from there.
+Windows Firewall will ask to allow `node.exe` and `weed.exe` on private networks
+the first time — allow both. Turn `PHONE_MODE` off again afterwards.
 
 Two robust alternatives to the LAN IP:
 
-- **USB reverse tunnel** — cleanest, immune to VPN/firewall. With the device
-  plugged in:
+- **USB reverse tunnel** — cleanest, immune to VPN/firewall, no `PHONE_MODE`
+  needed. With the device plugged in:
   ```bash
-  adb reverse tcp:3000 tcp:3000 && adb reverse tcp:9000 tcp:9000
-  flutter run --dart-define=API_BASE=http://localhost:3000
+  adb reverse tcp:3002 tcp:3002 && adb reverse tcp:9000 tcp:9000
+  flutter run --dart-define=API_BASE=http://localhost:3002
   ```
-  Then also set the repo-root `.env` `S3_ENDPOINT=http://localhost:9000` and
-  restart the API, so presigned URLs resolve through the tunnel.
-- **Emulator** — use `--dart-define=API_BASE=http://10.0.2.2:3000` (the
+  `S3_ENDPOINT=http://localhost:9000` (the default) then resolves through the tunnel.
+- **Emulator** — use `--dart-define=API_BASE=http://10.0.2.2:3002` (the
   emulator's alias for the host loopback).
 
 **Two things reliably break LAN access:** a VPN on either device (blocks
 LAN-to-LAN), and `localhost` left in any address the device receives (on a phone
 that means the phone). Verify from the phone's browser first —
-`http://192.168.1.22:3000/v1/health` should return JSON.
+`http://<ip>:3002/v1/health` should return JSON.
 
 ### The viewer renders textures
 
@@ -338,6 +405,8 @@ Each of these was a deliberate call made while building; all are reversible.
 | Orchestrator owns S1–S3, S11–S12 | **Python owns all media work** | `opencv-python` bundles ffmpeg, removing a system-binary dependency from Node. The invariant that mattered — Node owns *state*, Python owns *pixels* — got cleaner. |
 | Upload field `sha256` | **`clientFingerprint`** | Hashing 60 MB on the JS thread blocks the UI for seconds. Real integrity is byte-length + magic-byte sniffing server-side. A field named `sha256` that isn't one is a false assurance. |
 | Guided capture with on-device pose/blur ML | **Silhouette overlay, tilt check, timed auto-capture; quality scoring server-side** | Real-time pose analysis needs `react-native-vision-camera` + TFLite and a physical device to validate. The server-side scorer (sharpness, exposure, duplicate, coverage) is built and tested. |
+| MinIO object storage | **SeaweedFS** on the Windows stack | MinIO's community binaries are no longer published (HTTP 410). SeaweedFS speaks the same S3 API; Docker/WSL paths still use MinIO. |
+| Anny only as an optional S8 retarget | **Anny is the scan's body model** | SAM 3D Body needs an 8 GB NVIDIA GPU; this laptop has none. Anny runs on CPU, is rigged, and is fitted straight to the measurements ([08 §1](docs/08-realistic-body-tryon-gemini.md)). |
 
 ---
 
@@ -354,8 +423,14 @@ Each of these was a deliberate call made while building; all are reversible.
    working, not a defect: four discrete angles genuinely cover less than a
    slow video turn. Video mode should score materially higher — worth
    confirming once real captures exist.
-4. **`S8_RETARGET` (Anny) is skipped**, as scoped. clad.you found Anny's built-in
-   regressor underperformed and trained their own; budget real work here.
+4. **`S8_RETARGET` is still skipped** for the video/SAM path. The four-photo
+   scan now fits Anny directly to the measurements instead
+   ([08 §1](docs/08-realistic-body-tryon-gemini.md)).
+7. **No real-person accuracy study yet.** The `/accuracy` page and
+   `GET /v1/accuracy/report` are the instrument; 10–20 people with a tape are
+   the missing data.
+8. **Login is development-only** (`AUTH_PROVIDER=local` accepts any email).
+   Clerk or Supabase must replace it before anyone outside the team uses it.
 5. **Performance numbers in `docs/06` are still estimates.** The metadata
    sidecar records per-stage timings — replace that table with measurements
    after the first real GPU runs.

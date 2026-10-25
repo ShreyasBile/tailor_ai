@@ -486,6 +486,10 @@ export const ScanReport = z.object({
     .object({
       shape: z.array(z.number()),
       metricScale: z.number(),
+      // Which body model `shape` parameterises. Absent on reports from before
+      // the Anny body (those shapes are the parametric humanoid's).
+      bodyModel: z.enum(['MHR', 'ANNY']).optional(),
+      bodyModelVersion: z.string().optional(),
       residualCm: z.record(z.string(), z.number()),
       iterations: z.number().int(),
       elapsedMs: z.number().int(),
@@ -575,8 +579,17 @@ export const RecommendationView = z.object({
   confidence: z.object({ value: z.number(), label: z.string() }),
   preference: FitPreference,
   dimensions: z.array(FitDimension),
-  sizes: z.array(z.object({ label: z.string(), score: z.number() })),
+  sizes: z.array(
+    z.object({
+      label: z.string(),
+      score: z.number(),
+      // Absent on recommendations stored before the try-on view.
+      dimensions: z.array(FitDimension).optional(),
+    }),
+  ),
   explanation: z.string(),
+  /** "rules", or "gemini:<model>" when Gemini rewrote the explanation. */
+  explanationSource: z.string(),
   engineVersion: z.string(),
   createdAt: IsoDateTime,
   feedback: z
@@ -584,6 +597,129 @@ export const RecommendationView = z.object({
     .nullable(),
 });
 export type RecommendationView = z.infer<typeof RecommendationView>;
+
+// ─────────────────────────── Admin: add outfits ───────────────────────────
+
+export const SizeChartDimension = z.enum([
+  'chest', 'waist', 'hip', 'shoulder_width', 'neck', 'arm_length', 'inseam', 'thigh',
+]);
+export type SizeChartDimension = z.infer<typeof SizeChartDimension>;
+
+const CmRange = z
+  .tuple([z.number().positive().max(250), z.number().positive().max(250)])
+  .refine(([lo, hi]) => lo < hi, 'min must be below max');
+
+export const ReadSizeChartRequest = z.object({
+  imageBase64: z.string().min(100).max(3_000_000),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+});
+export type ReadSizeChartRequest = z.infer<typeof ReadSizeChartRequest>;
+
+export const ReadSizeChartResponse = z.object({
+  chartKind: z.enum(['body', 'garment', 'unknown']),
+  categoryGuess: GarmentCategory.nullable(),
+  dimensions: z.array(z.string()),
+  sizes: z.array(z.object({ label: z.string(), measurements: z.record(z.string(), z.tuple([z.number(), z.number()])) })),
+  warnings: z.array(z.string()),
+  notes: z.string(),
+  model: z.string(),
+});
+export type ReadSizeChartResponse = z.infer<typeof ReadSizeChartResponse>;
+
+export const CreateGarmentRequest = z.object({
+  /** An existing brand by slug, or a new one by name. */
+  brand: z.union([
+    z.object({ slug: z.string().min(1) }),
+    z.object({
+      name: z.string().min(2).max(60),
+      description: z.string().max(200).optional(),
+      accentHex: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#2f3a4a'),
+    }),
+  ]),
+  name: z.string().min(2).max(80),
+  category: GarmentCategory,
+  subcategory: z.string().min(2).max(40),
+  gender: z.enum(['men', 'women', 'unisex']),
+  fitIntent: z.enum(['SLIM', 'REGULAR', 'RELAXED', 'OVERSIZED']),
+  stretch: z.enum(['NONE', 'LOW', 'MEDIUM', 'HIGH']),
+  material: z.string().min(2).max(120),
+  description: z.string().min(10).max(600),
+  priceCents: z.number().int().positive().max(10_000_000),
+  currency: z.string().length(3).default('USD'),
+  colorName: z.string().min(2).max(40),
+  colorHex: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  sizeChart: z.object({
+    sizes: z
+      .array(
+        z.object({
+          label: z.string().min(1).max(12),
+          measurements: z.record(SizeChartDimension, CmRange),
+        }),
+      )
+      .min(1)
+      .max(15),
+  }),
+});
+export type CreateGarmentRequest = z.infer<typeof CreateGarmentRequest>;
+
+export const AdminStatus = z.object({ isAdmin: z.boolean(), geminiEnabled: z.boolean() });
+export type AdminStatus = z.infer<typeof AdminStatus>;
+
+// ─────────────────────────── Accuracy check (tape vs scan) ───────────────────
+
+export const TapeCheckRequest = z.object({
+  /** measurement name → tape-measured value, cm */
+  values: z.record(z.string(), z.number().positive().max(300)),
+  note: z.string().max(500).optional(),
+});
+export type TapeCheckRequest = z.infer<typeof TapeCheckRequest>;
+
+export const TapeComparison = z.object({
+  name: z.string(),
+  label: z.string(),
+  scanCm: z.number(),
+  tapeCm: z.number(),
+  /** scan − tape: positive means the scan reads larger */
+  errorCm: z.number(),
+  targetCm: z.number(),
+  withinTarget: z.boolean(),
+  typicalErrorCm: z.number().nullable(),
+});
+export type TapeComparison = z.infer<typeof TapeComparison>;
+
+export const TapeCheckView = z.object({
+  id: Uuid,
+  bodyCoreId: Uuid,
+  bodyVersion: z.number().int(),
+  note: z.string().nullable(),
+  rows: z.array(TapeComparison),
+  meanAbsErrorCm: z.number().nullable(),
+  withinTargetPct: z.number().nullable(),
+  createdAt: IsoDateTime,
+});
+export type TapeCheckView = z.infer<typeof TapeCheckView>;
+
+export const AccuracyReport = z.object({
+  people: z.number().int(),
+  checks: z.number().int(),
+  rows: z.array(
+    z.object({
+      name: z.string(),
+      label: z.string(),
+      n: z.number().int(),
+      maeCm: z.number(),
+      biasCm: z.number(),
+      within2Pct: z.number(),
+      within4Pct: z.number(),
+      targetCm: z.number(),
+    }),
+  ),
+  sizeFeedback: z.object({
+    total: z.number().int(),
+    perfectPct: z.number().nullable(),
+  }),
+});
+export type AccuracyReport = z.infer<typeof AccuracyReport>;
 
 export const FitFeedbackRequest = z.object({
   sizeChosen: z.string().min(1).max(20),

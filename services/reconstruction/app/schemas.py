@@ -209,6 +209,9 @@ class BuildMeshRequest(BaseModel):
     jobId: str
     shape: list[float]
     metricScale: float = 1.0
+    # "ANNY" → the Anny body; anything else → the parametric humanoid, which is
+    # what every shape vector stored before the Anny body describes.
+    bodyModel: str = "MHR"
     textureUrl: str | None = None
     outputGlbUrl: str
     outputObjUrl: str | None = None
@@ -288,6 +291,8 @@ class ScanAnalyzeRequest(BaseModel):
     heightCm: float = Field(gt=50, lt=260)
     views: list[ScanView]
     fitBody: bool = True
+    # Sets the Anny body's gender slider; None/UNSPECIFIED → androgynous.
+    sexAtBirth: str | None = None
 
 
 # ── /fit/recommend ──
@@ -311,6 +316,14 @@ class FitRecommendRequest(BaseModel):
     garment: FitGarment
     sizeChart: list[SizeChartRow]
     preference: Literal["snug", "regular", "loose"] = "regular"
+
+
+# ── /catalog/read-size-chart (admin: Gemini reads a chart image) ──
+
+
+class ReadSizeChartRequest(BaseModel):
+    imageBase64: str = Field(min_length=100, max_length=3_000_000)
+    mimeType: Literal["image/jpeg", "image/png", "image/webp"] = "image/jpeg"
 
 
 # ── /process-scan (the MVP plan's §7 interface contract, verbatim shape) ──

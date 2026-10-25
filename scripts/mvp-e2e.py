@@ -25,8 +25,23 @@ import numpy as np
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-API = "http://127.0.0.1:3000/v1"
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _api_base() -> str:
+    """TAILORAI_API, else API_PORT from the repo's .env (another local app may
+    hold 3000), else 3000."""
+    import os  # noqa: PLC0415
+    import re  # noqa: PLC0415
+
+    if os.getenv("TAILORAI_API"):
+        return os.environ["TAILORAI_API"].rstrip("/")
+    env = ROOT / ".env"
+    m = re.search(r"^API_PORT=(\d+)", env.read_text(encoding="utf-8"), re.M) if env.exists() else None
+    return f"http://127.0.0.1:{m.group(1) if m else 3000}/v1"
+
+
+API = _api_base()
 DEMO = ROOT / "apps" / "web" / "public" / "demo-scan"
 VIEWS = ("front", "back", "left", "right")
 EMAIL = f"mvp-e2e-{int(time.time())}@tailorai.test"
@@ -144,8 +159,12 @@ def main() -> None:
     rec = c.post("/garments/northline-oxford-shirt/recommend", json={}).raise_for_status().json()
     check(bool(rec["recommendedSize"]) and 0 <= rec["fitScore"] <= 100,
           f"oxford shirt → size {rec['recommendedSize']}, fit {rec['fitScore']} ({rec['fitLabel']})")
-    check(len(rec["dimensions"]) >= 3 and rec["explanation"].startswith("We recommend"),
-          "recommendation explains the key dimensions")
+    # Rules text, or (GEMINI_API_KEY set) Gemini's rewrite, which must name the size.
+    explained = (rec["explanation"].startswith("We recommend")
+                 or (rec.get("explanationSource", "").startswith("gemini")
+                     and rec["recommendedSize"] in rec["explanation"]))
+    check(len(rec["dimensions"]) >= 3 and explained,
+          f"recommendation explains the key dimensions ({rec.get('explanationSource', 'rules')})")
     jeans = c.post("/garments/denim-theory-straight/recommend", json={"preference": "LOOSE"}).raise_for_status().json()
     check(any(d["name"] == "inseam" for d in jeans["dimensions"]), f"jeans use waist/hip/inseam → {jeans['recommendedSize']}")
     snug = c.post("/garments/northline-oxford-shirt/recommend", json={"preference": "SNUG"}).json()

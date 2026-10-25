@@ -39,6 +39,7 @@ model User {
   refreshTokens   RefreshToken[]
   recommendations Recommendation[]
   fitFeedback     FitFeedback[]
+  tapeChecks      TapeCheck[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -338,6 +339,7 @@ model BodyCore {
   renders         AvatarRender[]
   measurements    BodyMeasurement[]
   recommendations Recommendation[]
+  tapeChecks      TapeCheck[]
 
   createdAt    DateTime  @default(now())
   supersededAt DateTime?
@@ -592,4 +594,22 @@ model FitFeedback {
   createdAt DateTime @default(now())
 
   @@index([garmentId, outcome])
+}
+
+/// Tape-measured ground truth entered by a user to check their scan — the
+/// accuracy study. Compared against the BodyCore's measurements at the time.
+model TapeCheck {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bodyCoreId String   @db.Uuid
+  bodyCore   BodyCore @relation(fields: [bodyCoreId], references: [id], onDelete: Cascade)
+
+  /// measurement name → tape value, cm
+  values Json
+  note   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

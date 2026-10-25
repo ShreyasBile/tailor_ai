@@ -6,9 +6,9 @@ import { SearchX, WifiOff } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtPrice, titleCase } from '@/lib/format';
 import { useSession } from '@/lib/session';
-import type { GarmentSummary, RecommendationView } from '@/lib/types';
+import type { AdminStatus, GarmentSummary, RecommendationView } from '@/lib/types';
 import { GarmentArt } from '@/components/garment-art';
-import { Badge, Button, Card, EmptyState, Segmented, Spinner, cx } from '@/components/ui';
+import { Badge, Button, ButtonLink, Card, EmptyState, Segmented, Spinner, cx } from '@/components/ui';
 
 const CATEGORIES = [
   { value: 'ALL', label: 'All' },
@@ -35,10 +35,14 @@ export default function ShopPage() {
       .catch((err) => setLoadError((err as Error).message));
   }, []);
   useEffect(load, [load]);
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     if (!user) return;
     api<RecommendationView[]>('/me/recommendations')
       .then((rs) => setRecs(Object.fromEntries(rs.map((r) => [r.garment.slug, r]))))
+      .catch(() => {});
+    api<AdminStatus>('/admin/status')
+      .then((s) => setIsAdmin(s.isAdmin))
       .catch(() => {});
   }, [user]);
 
@@ -62,16 +66,23 @@ export default function ShopPage() {
             Every brand cuts differently. Open an item and we&apos;ll match its size chart to your Body Profile.
           </p>
         </div>
-        <Segmented
-          size="sm"
-          value={gender}
-          onChange={setGender}
-          options={[
-            { value: 'all', label: 'Everyone' },
-            { value: 'women', label: 'Women' },
-            { value: 'men', label: 'Men' },
-          ]}
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && (
+            <ButtonLink href="/admin/outfits" variant="secondary" size="sm">
+              + Add outfit
+            </ButtonLink>
+          )}
+          <Segmented
+            size="sm"
+            value={gender}
+            onChange={setGender}
+            options={[
+              { value: 'all', label: 'Everyone' },
+              { value: 'women', label: 'Women' },
+              { value: 'men', label: 'Men' },
+            ]}
+          />
+        </div>
       </div>
 
       <div className="scroll-thin mt-8 flex gap-2 overflow-x-auto pb-2">

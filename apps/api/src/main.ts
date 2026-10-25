@@ -32,7 +32,10 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new ProblemDetailsFilter());
 
   // JSON bodies only, and small ones — file bytes go straight to object storage
-  // via presigned URLs and never pass through here (docs/02 §5).
+  // via presigned URLs and never pass through here (docs/02 §5). One admin
+  // exception: a size-chart image (downscaled in the browser) is read once
+  // by Gemini and discarded, so it is posted inline rather than stored.
+  app.use('/v1/admin/size-chart/read', json({ limit: '4mb' }));
   app.use(json({ limit: '256kb' }));
 
   app.enableShutdownHooks();

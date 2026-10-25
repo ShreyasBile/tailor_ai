@@ -3,11 +3,13 @@
 Turn phone photos or a short 360° video into an accurate 3D digital human — and persist it as a
 permanent **Digital Body Profile**.
 
-> **Status:** Implemented through M6. The reconstruction pipeline is verified
-> end-to-end (25 tests, real GLB output, exact metric scale). The API,
-> orchestrator and mobile app are built and typecheck but have not been run
-> against live infrastructure — Docker Desktop's engine is not responding on
-> this machine. See [RUNBOOK](RUNBOOK.md) §0.
+> **Status:** Running end to end on a Windows laptop (no Docker/WSL needed).
+> Four photos → 11 measurements → a realistic, rigged **Anny** 3D body fitted
+> to them → a 34-outfit shop with **Find my size** and **3D try-on** (fit map on
+> your own body, every size) → an **accuracy page** that compares the scan with
+> a tape measure. Optional **Gemini** writes size explanations and reads brand
+> size charts. 70 unit tests, `npm run smoke` 23/23, `npm run test:mvp` 21/21.
+> The Flutter phone app has not yet been run on a device. See [RUNBOOK](RUNBOOK.md).
 
 ---
 
@@ -56,14 +58,16 @@ cd services/reconstruction && .venv/Scripts/python.exe -m pytest tests/ -q
 | [05 — Mobile App](docs/05-mobile-app.md) | Flutter stack, guided capture, 3D viewer, design language |
 | [06 — Infra, Cost & Risk](docs/06-infra-cost-risk.md) | Compute/storage/GPU estimates, **privacy & legal**, risk register |
 | [07 — Body Intelligence MVP](docs/07-body-intelligence-mvp.md) | **The web MVP**: four-photo scan → measurements → Body Profile → Find My Size; accuracy and limitations |
+| [08 — Realistic body, try-on, Gemini](docs/08-realistic-body-tryon-gemini.md) | Anny body fitted to all measurements, 3D try-on fit map, accuracy study, Gemini features, add-outfit page |
 
 ## Stack
 
-**Web (MVP)** Next.js 15 · Tailwind · React Three Fiber — scan, Body Profile, shop, Find My Size
+**Web (MVP)** Next.js 15.5 · Tailwind · React Three Fiber — scan, Body Profile, shop, Find My Size, 3D try-on, accuracy, add-outfit
 **Mobile** Flutter (Dart) · `model_viewer_plus` (textured GLB) · `camera` · `go_router` · `provider`
-**API** NestJS (Fastify) · Postgres + Prisma · Redis + BullMQ · S3-compatible storage
-**Pipeline** Node orchestrator (state machine) → stateless Python GPU service (FastAPI + PyTorch)
-**Models** SAM 3D Body → MHR · BiRefNet · xatlas — all behind swappable adapters; MVP scan uses MediaPipe Pose (CPU)
+**API** NestJS (Express) · Postgres + Prisma · Redis + BullMQ · S3-compatible storage (MinIO or SeaweedFS)
+**Pipeline** Node orchestrator (state machine) → stateless Python service (FastAPI + PyTorch)
+**Models** MediaPipe Pose (scan, CPU) · **Anny** (rigged body, CPU) · SAM 3D Body → MHR · BiRefNet · xatlas — all behind swappable adapters
+**Optional AI** Gemini (`gemini-3.5-flash-lite`) — size explanations, size-chart reading, opt-in photo check
 
 ## Model choice, briefly
 

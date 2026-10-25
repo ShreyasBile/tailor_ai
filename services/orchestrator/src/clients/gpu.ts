@@ -60,6 +60,8 @@ export interface ScanAnalyzeRequest {
   heightCm: number;
   views: Array<{ view: 'front' | 'back' | 'left' | 'right'; imageUrl: string }>;
   fitBody: boolean;
+  /** Sets the fitted body's gender; null → androgynous. */
+  sexAtBirth: string | null;
 }
 
 export interface SelectRequest {
@@ -88,6 +90,8 @@ export interface BuildMeshRequest {
   jobId: string;
   shape: number[];
   metricScale: number;
+  /** Which body model `shape` parameterises — the service builds that mesh. */
+  bodyModel: string;
   textureUrl: string | null;
   outputGlbUrl: string;
   outputObjUrl: string | null;

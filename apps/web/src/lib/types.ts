@@ -17,6 +17,12 @@ export type {
   FitDimension,
   FitPreference,
   Consent,
+  TapeCheckView,
+  TapeComparison,
+  AccuracyReport,
+  AdminStatus,
+  CreateGarmentRequest,
+  ReadSizeChartResponse,
 } from '@tailorai/contracts';
 
 export const VIEWS = ['front', 'back', 'left', 'right'] as const;

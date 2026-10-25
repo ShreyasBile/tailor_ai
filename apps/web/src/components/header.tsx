@@ -10,6 +10,7 @@ const NAV = [
   { href: '/profile', label: 'Body Profile' },
   { href: '/scan', label: 'Scan' },
   { href: '/shop', label: 'Shop' },
+  { href: '/accuracy', label: 'Accuracy' },
 ];
 
 export function Logo() {
@@ -40,7 +41,7 @@ export function Header() {
               className={cx(
                 'focus-ring rounded-full px-3 py-1.5 font-medium transition',
                 path.startsWith(n.href) ? 'bg-black/[0.06] text-ink' : 'text-ink-muted hover:text-ink',
-                n.href === '/scan' && 'hidden sm:inline-flex',
+                (n.href === '/scan' || n.href === '/accuracy') && 'hidden sm:inline-flex',
               )}
             >
               {n.label}

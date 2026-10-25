@@ -63,6 +63,12 @@ export const EnvSchema = z.object({
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().default(60_000),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().default(120),
 
+  // Catalogue admins (comma-separated emails). Empty in local development
+  // means every signed-in user may add outfits; never in production.
+  ADMIN_EMAILS: csv.default(''),
+  // Only its presence is read here: the reconstruction service makes the calls.
+  GEMINI_API_KEY: z.string().optional(),
+
   // Compliance — see docs/06 §6. Defaults are the safe ones.
   BLOCKED_REGIONS: csv.default('US-IL'),
   MIN_AGE_YEARS: z.coerce.number().int().default(18),

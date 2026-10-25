@@ -1,15 +1,61 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { ArrowLeft, Check, Info, Ruler, ScanLine, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
 import { fmtNumber, fmtPrice, titleCase, type Units } from '@/lib/format';
 import { useSession } from '@/lib/session';
-import type { FitDimension, FitPreference, GarmentDetail, RecommendationView } from '@/lib/types';
-import { GarmentArt } from '@/components/garment-art';
+import type {
+  AvatarRender,
+  FitDimension,
+  FitPreference,
+  GarmentDetail,
+  MeasurementsResponse,
+  RecommendationView,
+} from '@/lib/types';
+import { GarmentArt, garmentKind } from '@/components/garment-art';
 import { ScoreRing } from '@/components/score-ring';
 import { Badge, Button, ButtonLink, Card, Segmented, Spinner, cx } from '@/components/ui';
+import { DEFAULT_LANDMARKS, FIT_COLORS, type Landmarks } from '@/lib/tryon';
+import type { TryOnMode } from '@/components/tryon-viewer';
+
+// three.js only runs in the browser.
+const TryOnViewer = dynamic(() => import('@/components/tryon-viewer').then((m) => m.TryOnViewer), {
+  ssr: false,
+  loading: () => (
+    <div className="grid h-full place-items-center">
+      <Spinner />
+    </div>
+  ),
+});
+
+/** Measurement heights from the scan (fractions of stature), for placing the
+ * garment's chest, waist and hip on this particular body. */
+function landmarksFrom(meas: MeasurementsResponse | null): Landmarks {
+  const l = { ...DEFAULT_LANDMARKS };
+  for (const d of meas?.details ?? []) {
+    const r = d.region as { y?: number; y0?: number; y1?: number };
+    if (d.name === 'chest' && r.y) l.chest = r.y;
+    if (d.name === 'waist' && r.y) l.waist = r.y;
+    if (d.name === 'hip' && r.y) l.hip = r.y;
+    if (d.name === 'neck' && r.y) l.neck = r.y;
+    if (d.name === 'thigh' && r.y) l.thigh = r.y;
+    if (d.name === 'shoulder_width' && r.y) l.shoulder = r.y;
+    if (d.name === 'inseam' && r.y1) l.crotch = r.y1;
+  }
+  return l;
+}
+
+/** The fit detail for one size; older stored recommendations only carry the
+ * recommended size's. */
+function dimsForSize(rec: RecommendationView, size: string | null): FitDimension[] | null {
+  const label = size ?? rec.recommendedSize;
+  const s = rec.sizes.find((x) => x.label === label);
+  if (s?.dimensions) return s.dimensions;
+  return label === rec.recommendedSize ? rec.dimensions : null;
+}
 
 const DIM_LABEL: Record<string, string> = {
   chest: 'Chest',
@@ -35,6 +81,24 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
   const [needsScan, setNeedsScan] = useState(false);
   const [units, setUnits] = useState<Units>('cm');
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
+  const [avatar, setAvatar] = useState<AvatarRender | null>(null);
+  const [meas, setMeas] = useState<MeasurementsResponse | null>(null);
+  const [view, setView] = useState<'product' | 'tryon'>('product');
+  const [mode, setMode] = useState<TryOnMode>('fit');
+
+  // The body to try clothes on.
+  useEffect(() => {
+    if (!user) return;
+    api<AvatarRender>('/me/avatar').then(setAvatar).catch(() => setAvatar(null));
+    api<MeasurementsResponse>('/me/measurements').then(setMeas).catch(() => setMeas(null));
+  }, [user]);
+
+  const landmarks = useMemo(() => landmarksFrom(meas), [meas]);
+  const tryDims = useMemo(() => (rec ? dimsForSize(rec, selectedSize) : null), [rec, selectedSize]);
+  const canTryOn = Boolean(avatar?.assets.glb && rec && tryDims);
+  useEffect(() => {
+    if (canTryOn) setView('tryon');
+  }, [canTryOn]);
 
   useEffect(() => {
     api<GarmentDetail>(`/garments/${slug}`, { auth: false })
@@ -113,9 +177,62 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
         {/* product — min-w-0 lets the size-chart table scroll inside its card
             instead of widening the grid column past a phone's screen */}
         <div className="min-w-0">
-          <Card className="aspect-square overflow-hidden bg-gradient-to-b from-[#fbfaf6] to-[#efece4] p-12">
-            <GarmentArt subcategory={g.subcategory} category={g.category} colorHex={g.colorHex} className="h-full w-full" />
-          </Card>
+          {canTryOn && (
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <Segmented
+                size="sm"
+                value={view}
+                onChange={setView}
+                options={[
+                  { value: 'tryon', label: 'Try it on' },
+                  { value: 'product', label: 'Product' },
+                ]}
+              />
+              {view === 'tryon' && (
+                <Segmented
+                  size="sm"
+                  value={mode}
+                  onChange={setMode}
+                  options={[
+                    { value: 'fit', label: 'Fit map' },
+                    { value: 'fabric', label: 'Fabric' },
+                  ]}
+                />
+              )}
+            </div>
+          )}
+          {view === 'tryon' && canTryOn && avatar?.assets.glb && rec && tryDims ? (
+            <Card className="relative aspect-square overflow-hidden p-0">
+              <TryOnViewer
+                url={avatar.assets.glb.url}
+                heightM={(meas?.heightCm ?? user?.heightCm ?? 175) / 100}
+                kind={garmentKind(g.subcategory, g.category)}
+                category={g.category}
+                fitIntent={g.fitIntent}
+                colorHex={g.colorHex}
+                dims={tryDims}
+                landmarks={landmarks}
+                armLengthCm={meas?.details?.find((d) => d.name === 'arm_length')?.value}
+                inseamCm={meas?.details?.find((d) => d.name === 'inseam')?.value}
+                mode={mode}
+                units={units}
+              />
+              <div className="pointer-events-none absolute left-4 top-4 flex flex-wrap gap-1.5">
+                <Badge tone="accent">Size {selectedSize ?? rec.recommendedSize}</Badge>
+              </div>
+              {mode === 'fit' && <FitLegend />}
+            </Card>
+          ) : (
+            <Card className="aspect-square overflow-hidden bg-gradient-to-b from-[#fbfaf6] to-[#efece4] p-12">
+              <GarmentArt subcategory={g.subcategory} category={g.category} colorHex={g.colorHex} className="h-full w-full" />
+            </Card>
+          )}
+          {view === 'tryon' && canTryOn && (
+            <p className="mt-2 text-xs text-ink-muted">
+              Your scanned body wearing size {selectedSize ?? rec?.recommendedSize}. Pick another size on the right to
+              compare. Colours show room at each zone; lengths show where hems and cuffs land.
+            </p>
+          )}
           <Card className="mt-6 p-6">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="flex items-center gap-2 font-semibold">
@@ -285,6 +402,11 @@ function Result({
       </div>
 
       <p className="mt-5 leading-relaxed text-ink-soft">{rec.explanation}</p>
+      {rec.explanationSource.startsWith('gemini') && (
+        <p className="mt-1.5 flex items-center gap-1 text-[11px] text-ink-faint">
+          <Sparkles className="h-3 w-3" /> Written with Gemini from the numbers below — sizes come from the fit engine.
+        </p>
+      )}
 
       {/* every size, scored */}
       <div className="scroll-thin mt-5 flex gap-2 overflow-x-auto pb-1">
@@ -310,14 +432,17 @@ function Result({
         ))}
       </div>
 
-      {/* how each dimension fits */}
+      {/* how each dimension fits — for whichever size is selected */}
       <div className="mt-6 space-y-4">
         <p className="text-xs font-semibold uppercase tracking-wider text-ink-muted">
-          How {rec.recommendedSize} fits you
+          How {selectedSize ?? rec.recommendedSize} fits you
         </p>
-        {rec.dimensions.map((d) => (
+        {(dimsForSize(rec, selectedSize) ?? rec.dimensions).map((d) => (
           <DimensionBar key={d.name} d={d} units={units} />
         ))}
+        {!dimsForSize(rec, selectedSize) && (
+          <p className="text-xs text-ink-muted">Press “Find my size” again to see every size in detail.</p>
+        )}
       </div>
 
       <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-line pt-5 text-sm">
@@ -380,6 +505,24 @@ function DimensionBar({ d, units }: { d: FitDimension; units: Units }) {
           Size range {fmtNumber(lo, units, 0)}–{fmtNumber(hi, units, 0)} {units}
         </span>
       </div>
+    </div>
+  );
+}
+
+function FitLegend() {
+  const items: [string, string][] = [
+    [FIT_COLORS.tight, 'Too tight'],
+    [FIT_COLORS.snug, 'Snug'],
+    [FIT_COLORS.good, 'Good'],
+    [FIT_COLORS.loose, 'Loose'],
+  ];
+  return (
+    <div className="pointer-events-none absolute bottom-14 left-4 flex flex-col gap-1 rounded-xl border border-line bg-white/90 px-3 py-2 text-[11px] shadow-soft">
+      {items.map(([c, label]) => (
+        <span key={label} className="flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: c }} /> {label}
+        </span>
+      ))}
     </div>
   );
 }

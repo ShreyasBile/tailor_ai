@@ -18,3 +18,5 @@ attrs>=23.1.0
 flatbuffers>=2.0
 protobuf>=4.25.3,<5
 matplotlib>=3.8
+# Optional Gemini features (off unless GEMINI_API_KEY is set).
+google-genai>=2.33,<3

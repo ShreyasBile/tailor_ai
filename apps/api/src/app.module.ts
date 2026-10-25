@@ -11,6 +11,8 @@ import { JobsModule } from './modules/jobs/jobs.module';
 import { AvatarsModule } from './modules/avatars/avatars.module';
 import { HealthModule } from './modules/health/health.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
+import { AccuracyModule } from './modules/accuracy/accuracy.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AuthGuard } from './common/auth.guard';
 
 @Module({
@@ -27,6 +29,8 @@ import { AuthGuard } from './common/auth.guard';
     JobsModule,
     AvatarsModule,
     CatalogModule,
+    AccuracyModule,
+    AdminModule,
     HealthModule,
   ],
   providers: [

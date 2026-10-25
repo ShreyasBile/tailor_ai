@@ -37,6 +37,7 @@ interface FitResult {
   dimensions: RecommendationView['dimensions'];
   sizes: RecommendationView['sizes'];
   explanation: string;
+  explanationSource?: string;
   engineVersion: string;
 }
 
@@ -188,7 +189,8 @@ export class CatalogService {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(15_000),
+        // Room for the optional Gemini explanation (≤12 s) on top of the engine.
+        signal: AbortSignal.timeout(25_000),
       });
       if (!res.ok) throw new Error(`fit ${res.status}: ${(await res.text()).slice(0, 200)}`);
       return (await res.json()) as FitResult;
@@ -258,6 +260,7 @@ export class CatalogService {
       dimensions: res.dimensions,
       sizes: res.sizes,
       explanation: res.explanation,
+      explanationSource: res.explanationSource ?? 'rules',
       engineVersion: r.engineVersion,
       createdAt: r.createdAt.toISOString(),
       feedback: fb

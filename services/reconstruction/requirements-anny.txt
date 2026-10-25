@@ -1,0 +1,11 @@
+# Anny body model (Apache-2.0 code, CC0 MakeHuman assets) — the realistic,
+# rigged 3D body fitted to every four-view scan. CPU is enough.
+#
+# Install after requirements.txt, CPU torch first (smaller than the default):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements-anny.txt
+#
+# The first model load builds a cache in ~/.cache/anny (~90 s); later loads
+# take under a second. Without these packages the scan falls back to the
+# parametric humanoid (or force it with SCAN_BODY_MODEL=humanoid).
+anny==0.6.1
