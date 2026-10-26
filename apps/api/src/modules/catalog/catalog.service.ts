@@ -272,6 +272,7 @@ export class CatalogService {
       body,
       garment: {
         category: garment.category.toLowerCase(),
+        subcategory: garment.subcategory,
         fitIntent: garment.fitIntent.toLowerCase(),
         stretch: garment.stretch.toLowerCase(),
       },

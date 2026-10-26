@@ -143,3 +143,39 @@ def test_outside_cm_is_the_distance_from_the_range():
     xl = {d["name"]: d for d in r["dimensions"]}
     assert xl["chest"]["outsideCm"] == pytest.approx(98.7 - 110, abs=0.05)  # under the range: too big
     assert xl["waist"]["outsideCm"] == 0
+
+
+# ── measurement confidence and garment style ──
+
+TOPS_FULL = [
+    {"label": l, "measurements": {**s["measurements"], "arm_length": (56 + 2 * i, 58 + 2 * i), "neck": (37 + 2 * i, 39 + 2 * i)}}
+    for i, (l, s) in enumerate((x["label"], x) for x in TOPS)
+]
+
+
+def _body(waist: float, conf: float) -> dict:
+    return {"chest": {"value": 98, "confidence": 0.9}, "waist": {"value": waist, "confidence": conf},
+            "shoulder_width": 44.5}
+
+
+def test_confident_measurements_outweigh_doubtful_ones():
+    # A slightly snug waist costs less when the scan doubts the reading.
+    sure, doubtful = recommend(_body(89, 0.9), TEE, TOPS), recommend(_body(89, 0.15), TEE, TOPS)
+    assert sure["recommendedSize"] == doubtful["recommendedSize"] == "M"
+    assert doubtful["fitScore"] > sure["fitScore"]
+
+
+def test_only_a_confident_reading_forces_a_bigger_size():
+    # Waist 7 cm over M: trusted, M can't close → L; doubted, it can't overrule the chest.
+    assert recommend(_body(95, 0.9), TEE, TOPS)["recommendedSize"] == "L"
+    assert recommend(_body(95, 0.15), TEE, TOPS)["recommendedSize"] == "M"
+
+
+def test_a_tee_ignores_sleeve_length_and_neck():
+    body = {"chest": 98, "waist": 84, "shoulder_width": 44.5, "arm_length": 50.0, "neck": 46.0}
+    tee = recommend(body, {**TEE, "subcategory": "T-shirts"}, TOPS_FULL)
+    assert {d["name"] for d in tee["dimensions"]} == {"chest", "waist", "shoulder_width"}
+    shirt = recommend(body, {**TEE, "subcategory": "Shirts"}, TOPS_FULL)
+    assert {"arm_length", "neck"} <= {d["name"] for d in shirt["dimensions"]}
+    polo = recommend(body, {**TEE, "subcategory": "Polos"}, TOPS_FULL)
+    assert "arm_length" not in {d["name"] for d in polo["dimensions"]}

@@ -300,6 +300,8 @@ class ScanAnalyzeRequest(BaseModel):
 
 class FitGarment(BaseModel):
     category: str
+    # Style decides which measurements matter (no sleeve length on a tee).
+    subcategory: str = ""
     fitIntent: Literal["slim", "regular", "relaxed", "oversized"] = "regular"
     stretch: Literal["none", "low", "medium", "high"] = "none"
 

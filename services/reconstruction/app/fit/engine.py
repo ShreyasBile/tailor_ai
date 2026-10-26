@@ -45,6 +45,32 @@ BLOCKING = {"chest", "waist", "hip", "thigh"}
 BLOCK_MARGIN_CM = 2.0
 BLOCK_MIN_CONFIDENCE = 0.4
 
+# A floor under the looseness tolerance (cm) for charts with narrow ranges:
+# shoulders often span 2 cm, which would otherwise call 3 cm of room
+# unwearable. Typical girth ranges (5–10 cm) already exceed it, so ordinary
+# size choices and the snug/regular/loose preference are unaffected.
+LOOSE_MIN_CM = {"chest": 4.0, "waist": 4.0, "hip": 4.0, "thigh": 3.0, "shoulder_width": 2.5, "neck": 1.5}
+
+# Measurements a garment's style makes irrelevant: sleeve length on short or no
+# sleeves, neck size on anything but a collared, buttoned shirt.
+SHORT_OR_NO_SLEEVE = ("t-shirt", "tee", "polo", "vest", "nehru", "tank", "sleeveless")
+
+
+def _irrelevant(subcategory: str) -> set[str]:
+    s = subcategory.lower()
+    out = set()
+    if any(k in s for k in SHORT_OR_NO_SLEEVE):
+        out.add("arm_length")
+    if not ("shirt" in s and "t-shirt" not in s):
+        out.add("neck")
+    return out
+
+
+def _trust(confidence: float) -> float:
+    """How much a measurement's verdict counts toward the fit score: fully
+    when the scan is sure of it, down to 30% when it is a guess."""
+    return 0.3 + 0.7 * min(1.0, max(0.0, confidence))
+
 LABELS = {
     "chest": "Chest", "waist": "Waist", "hip": "Hip", "shoulder_width": "Shoulders",
     "inseam": "Inseam", "arm_length": "Sleeve", "neck": "Neck", "thigh": "Thigh",
@@ -115,7 +141,7 @@ def _score_dim(name: str, body: float, lo: float, hi: float, weight: float,
     if room < 0:
         sigma = 0.4 * width + tol
     else:
-        sigma = 0.8 * width if not is_length else 0.4 * width
+        sigma = max(0.8 * width, LOOSE_MIN_CM.get(name, 0.0)) if not is_length else 0.4 * width
     score = math.exp(-((room / sigma) ** 2))
 
     # Physically doesn't fit / far too big.
@@ -156,7 +182,7 @@ def _verdict(name: str, b: float, lo: float, hi: float, tol: float, is_length: b
         return "good fit"
     if b >= lo:
         return "relaxed"
-    if lo - b > (hi - lo):
+    if lo - b > max(hi - lo, LOOSE_MIN_CM.get(name, 0.0)):
         return "too loose"
     return "loose"
 
@@ -177,7 +203,8 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
 
     weights = WEIGHTS[cat]
     charted = {d for s in size_chart for d in s["measurements"]}
-    dims = [d for d in weights if d in charted and d in vals]
+    skip = _irrelevant(garment.get("subcategory", ""))
+    dims = [d for d in weights if d in charted and d in vals and d not in skip]
     if not dims:
         raise ValueError("no overlap between the size chart and the body measurements")
     total_w = sum(weights[d] for d in dims)
@@ -195,8 +222,10 @@ def recommend(body: dict[str, dict | float], garment: dict, size_chart: list[dic
             results.append(r)
         if not results:
             continue
-        w_sum = sum(r.weight for r in results)
-        score = sum(r.score * r.weight for r in results) / w_sum
+        # Each verdict counts by its importance for this garment × how sure the
+        # scan is of that measurement: a confident chest outweighs a doubtful neck.
+        w_sum = sum(r.weight * _trust(r.confidence) for r in results)
+        score = sum(r.score * r.weight * _trust(r.confidence) for r in results) / w_sum
         # A critical dimension that won't close/fit caps the size — and so
         # does any girth it can't close around, whatever its weight.
         blockers = [

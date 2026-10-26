@@ -332,6 +332,7 @@ function Result({
       </div>
 
       <p className="mt-5 leading-relaxed text-ink-soft">{rec.explanation}</p>
+      <UncertainTip dims={rec.dimensions} />
       {rec.explanationSource.startsWith('gemini') && (
         <p className="mt-1.5 flex items-center gap-1 text-[11px] text-ink-faint">
           <Sparkles className="h-3 w-3" /> Written with Gemini from the numbers below — sizes come from the fit engine.
@@ -339,19 +340,30 @@ function Result({
       )}
 
       {/* every size, scored */}
-      <div className="scroll-thin mt-5 flex gap-2 overflow-x-auto pb-1">
+      {/* Black = recommended; a ring = the size being shown below. */}
+      <p className="mt-5 text-xs text-ink-muted">
+        Recommended: <span className="font-semibold text-ink">{rec.recommendedSize}</span>
+        {selectedSize && selectedSize !== rec.recommendedSize && (
+          <>
+            {' '}
+            · Showing: <span className="font-semibold text-ink">{selectedSize}</span>
+          </>
+        )}
+        <span className="text-ink-faint"> — tap a size to see how it fits</span>
+      </p>
+      <div className="scroll-thin mt-2 flex gap-2 overflow-x-auto p-1">
         {rec.sizes.map((s) => (
           <button
             key={s.label}
             type="button"
             onClick={() => onSelectSize(s.label)}
+            aria-pressed={(selectedSize ?? rec.recommendedSize) === s.label}
             className={cx(
               'focus-ring flex min-w-[3.5rem] shrink-0 flex-col items-center rounded-xl border px-3 py-2 transition',
               s.label === rec.recommendedSize
                 ? 'border-ink bg-ink text-paper'
-                : selectedSize === s.label
-                  ? 'border-ink-faint bg-white'
-                  : 'border-line bg-white text-ink-soft hover:border-ink-faint',
+                : 'border-line bg-white text-ink-soft hover:border-ink-faint',
+              (selectedSize ?? rec.recommendedSize) === s.label && 'ring-2 ring-accent ring-offset-2 ring-offset-paper',
             )}
           >
             <span className={cx('text-sm font-semibold', s.blocked && s.label !== rec.recommendedSize && 'text-ink-faint line-through')}>
@@ -513,6 +525,30 @@ function PhotoTryOn({
         <Sparkles className="h-4 w-4" /> Create my try-on photo
       </Button>
     </Card>
+  );
+}
+
+/**
+ * The size can only be as sure as the measurements it rests on: say which
+ * important ones the scan doubts (usually loose clothing) and how to fix it.
+ */
+function UncertainTip({ dims }: { dims: FitDimension[] }) {
+  const doubtful = dims.filter((d) => d.weight >= 0.15 && d.confidence !== undefined && d.confidence < 0.6);
+  if (doubtful.length === 0) return null;
+  const names = doubtful.map((d) => d.label.toLowerCase());
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return (
+    <div className="mt-4 flex items-start gap-2.5 rounded-xl bg-warn/10 p-3 text-sm">
+      <ScanLine className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+      <p className="text-ink-soft">
+        Your {list} {doubtful.length === 1 ? 'reading is' : 'readings are'} uncertain — usually loose clothing in the
+        photos, which makes sizes come out too big.{' '}
+        <Link href="/scan" className="font-medium text-ink underline">
+          Rescan in fitted clothes
+        </Link>{' '}
+        for a sharper size.
+      </p>
+    </div>
   );
 }
 
