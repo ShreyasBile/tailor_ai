@@ -694,6 +694,15 @@ export type ProductPhotoRequest = z.infer<typeof ProductPhotoRequest>;
 export const GeneratedImage = z.object({ imageBase64: z.string(), mimeType: z.string(), model: z.string() });
 export type GeneratedImage = z.infer<typeof GeneratedImage>;
 
+/** A saved photo try-on (made once, then reused). */
+export const PhotoTryOnView = z.object({
+  /** Short-lived signed URL to the saved image. */
+  url: z.string(),
+  model: z.string(),
+  createdAt: IsoDateTime,
+});
+export type PhotoTryOnView = z.infer<typeof PhotoTryOnView>;
+
 export const PhotoTryOnRequest = z.object({
   /** The shopper's explicit OK to send their front scan photo to Google Gemini. */
   consent: z.literal(true),

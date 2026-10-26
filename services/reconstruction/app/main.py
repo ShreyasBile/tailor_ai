@@ -376,13 +376,23 @@ def _gemini_or_503():
     return gemini
 
 
+_OUT_OF_CREDITS = HTTPException(status_code=402, detail={
+    "code": "GEMINI_CREDITS",
+    "message": "The Gemini image credits for this project are used up. Add credits at "
+               "https://aistudio.google.com (Billing), then try again.",
+})
+
+
 @app.post("/catalog/product-photo", dependencies=[Depends(require_api_key)])
 def product_photo(req: ProductPhotoRequest) -> dict:
     """A product photo for a garment, made from its description."""
     import base64
 
     gemini = _gemini_or_503()
-    out = gemini.product_photo(req.garment.model_dump())
+    try:
+        out = gemini.product_photo(req.garment.model_dump())
+    except gemini.OutOfCredits as exc:
+        raise _OUT_OF_CREDITS from exc
     if out is None:
         raise HTTPException(status_code=502, detail={"code": "IMAGE_FAILED", "message": "Couldn't create a photo right now."})
     data, mime = out
@@ -402,11 +412,14 @@ def photo_tryon(req: PhotoTryOnRequest) -> dict:
     mime = "image/png" if garment[:4] == b"\x89PNG" else "image/webp" if garment[8:12] == b"WEBP" else "image/jpeg"
     g = req.garment
     what = f"{g.colorName} {g.name}, {g.subcategory.lower()}".strip()
-    out = gemini.photo_tryon(person, garment, mime, what)
+    try:
+        out = gemini.photo_tryon(person, garment, mime, what)
+    except gemini.OutOfCredits as exc:
+        raise _OUT_OF_CREDITS from exc
     if out is None:
         raise HTTPException(status_code=502, detail={"code": "IMAGE_FAILED", "message": "Couldn't create the try-on photo right now."})
-    data, out_mime = out
-    return {"imageBase64": base64.b64encode(data).decode(), "mimeType": out_mime, "model": gemini.TRYON_IMAGE_MODEL}
+    data, out_mime, model = out
+    return {"imageBase64": base64.b64encode(data).decode(), "mimeType": out_mime, "model": model}
 
 
 @app.post("/process-scan", dependencies=[Depends(require_api_key)])

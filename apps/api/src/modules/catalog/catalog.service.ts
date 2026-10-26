@@ -15,6 +15,7 @@ import {
   type GarmentDetail,
   type GarmentSummary,
   type GeneratedImage,
+  type PhotoTryOnView,
   type RecommendationView,
   type SizeChartView,
 } from '@tailorai/contracts';
@@ -74,25 +75,61 @@ export class CatalogService {
     return imageUrl;
   }
 
+  private async currentCoreForTryOn(userId: string) {
+    return this.prisma.bodyCore.findFirst({
+      where: { userId, isCurrent: true },
+      orderBy: { version: 'desc' },
+      select: { id: true, job: { select: { sessionId: true } } },
+    });
+  }
+
+  private async toPhotoView(row: { storageKey: string; model: string; createdAt: Date }): Promise<PhotoTryOnView> {
+    return {
+      url: (await this.storage.presignGet(row.storageKey, 3600)).url,
+      model: row.model,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  /** The saved try-on for this item and the current scan, if one was made. */
+  async savedPhotoTryOn(userId: string, slug: string): Promise<PhotoTryOnView> {
+    const [garment, core] = await Promise.all([
+      this.prisma.garment.findUnique({ where: { slug }, select: { id: true } }),
+      this.currentCoreForTryOn(userId),
+    ]);
+    const row =
+      garment && core
+        ? await this.prisma.photoTryOn.findUnique({
+            where: { userId_garmentId_bodyCoreId: { userId, garmentId: garment.id, bodyCoreId: core.id } },
+          })
+        : null;
+    if (!row) throw new AppError('NOT_FOUND', { slug }, 'No try-on photo yet.');
+    return this.toPhotoView(row);
+  }
+
   /**
    * The shopper's own front scan photo, wearing this garment (Gemini image
-   * model). Explicit consent per request; the image is returned, not stored.
-   * A style preview only — fit and size come from the fit engine.
+   * model). Made once per item and scan, saved to the shopper's storage
+   * (erased with the account), and returned again on later requests instead
+   * of being regenerated. Explicit consent per request. A style preview only —
+   * fit and size come from the fit engine.
    */
-  async photoTryOn(userId: string, slug: string): Promise<GeneratedImage> {
+  async photoTryOn(userId: string, slug: string): Promise<PhotoTryOnView> {
     const env = loadEnv();
-    if (!env.GEMINI_API_KEY?.trim()) {
-      throw new AppError('GPU_UNAVAILABLE', undefined, 'Photo try-on needs GEMINI_API_KEY.');
-    }
     const garment = await this.prisma.garment.findUnique({ where: { slug } });
     if (!garment?.isActive) throw new AppError('NOT_FOUND', { slug }, "We couldn't find that item.");
     if (!garment.imageUrl) throw new AppError('NOT_FOUND', { slug }, 'This item has no product photo to try on yet.');
 
-    const core = await this.prisma.bodyCore.findFirst({
-      where: { userId, isCurrent: true },
-      orderBy: { version: 'desc' },
-      select: { job: { select: { sessionId: true } } },
-    });
+    const core = await this.currentCoreForTryOn(userId);
+    if (core) {
+      const saved = await this.prisma.photoTryOn.findUnique({
+        where: { userId_garmentId_bodyCoreId: { userId, garmentId: garment.id, bodyCoreId: core.id } },
+      });
+      if (saved) return this.toPhotoView(saved);
+    }
+    if (!env.GEMINI_API_KEY?.trim()) {
+      throw new AppError('GPU_UNAVAILABLE', undefined, 'Photo try-on needs GEMINI_API_KEY.');
+    }
     const front = core?.job
       ? await this.prisma.asset.findFirst({
           where: { sessionId: core.job.sessionId, kind: 'RAW_PHOTO', metadata: { path: ['view'], equals: 'front' } },
@@ -117,20 +154,45 @@ export class CatalogService {
         colorHex: garment.colorHex,
       },
     };
+    let res: Response;
     try {
-      const res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/tryon/photo`, {
+      res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/tryon/photo`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
         body: JSON.stringify(body),
-        // Two image attempts of up to 120 s each in the reconstruction service.
+        // Up to three image attempts (~15 s each, 120 s cap) in the reconstruction service.
         signal: AbortSignal.timeout(270_000),
       });
-      if (!res.ok) throw new Error(`tryon ${res.status}: ${(await res.text()).slice(0, 200)}`);
-      return (await res.json()) as GeneratedImage;
     } catch (err) {
       this.logger.error(`photo try-on failed: ${String(err)}`);
       throw new AppError('INFERENCE_FAILED', undefined, "We couldn't create your try-on photo right now. Please try again.");
     }
+    if (!res.ok) {
+      const detail = ((await res.json().catch(() => null)) as { detail?: { message?: string } } | null)?.detail;
+      this.logger.error(`photo try-on failed: ${res.status} ${detail?.message ?? ''}`);
+      // Out of Gemini credits: retrying won't help, so say what will.
+      if (res.status === 402) throw new AppError('QUOTA_EXCEEDED', undefined, detail?.message);
+      throw new AppError('INFERENCE_FAILED', undefined, "We couldn't create your try-on photo right now. Please try again.");
+    }
+    const image = (await res.json()) as GeneratedImage;
+
+    // Keep it: the next visit shows this one instead of asking Gemini again.
+    const ext = image.mimeType === 'image/png' ? 'png' : 'jpg';
+    const storageKey = `users/${userId}/tryon/${garment.slug}-${core!.id}.${ext}`;
+    await this.storage.putObject(storageKey, Buffer.from(image.imageBase64, 'base64'), image.mimeType);
+    const row = await this.prisma.photoTryOn.upsert({
+      where: { userId_garmentId_bodyCoreId: { userId, garmentId: garment.id, bodyCoreId: core!.id } },
+      update: { storageKey, mimeType: image.mimeType, model: image.model },
+      create: {
+        userId,
+        garmentId: garment.id,
+        bodyCoreId: core!.id,
+        storageKey,
+        mimeType: image.mimeType,
+        model: image.model,
+      },
+    });
+    return this.toPhotoView(row);
   }
 
   // ── Catalogue ──

@@ -179,32 +179,63 @@ _PHOTO_MESSAGES = {
 # reference images (person + garment), which the main model is built for.
 PRODUCT_IMAGE_MODEL = os.getenv("GEMINI_PRODUCT_IMAGE_MODEL", "gemini-3.1-flash-lite-image")
 TRYON_IMAGE_MODEL = os.getenv("GEMINI_TRYON_IMAGE_MODEL", "gemini-nano-banana-2.1")
-# A real photo can take a minute. generate_content honours this deadline; the
-# Interactions API cut every image call off at ~13 s (504 DEADLINE_EXCEEDED).
+# Last attempt if the main model keeps timing out: the previous generation,
+# often faster under load.
+TRYON_FALLBACK_MODEL = os.getenv("GEMINI_TRYON_FALLBACK_MODEL", "gemini-3.1-flash-image")
 IMAGE_TIMEOUT_MS = int(float(os.getenv("GEMINI_IMAGE_TIMEOUT_S", "120")) * 1000)
+# Google's image service drops a generation that runs past ~13 s with 504
+# DEADLINE_EXCEEDED, whatever deadline we send. Minimal thinking brings a
+# try-on to ~10–12 s with no visible loss in quality (measured).
+TRYON_THINKING = os.getenv("GEMINI_TRYON_THINKING", "minimal")
+_TRANSIENT = ("500", "502", "503", "504", "DEADLINE", "UNAVAILABLE")
 
 
-def _generate_image(client, model: str, contents: list, aspect: str) -> tuple[bytes, str]:
-    """One image from generate_content; one retry on a transient server error."""
+class OutOfCredits(Exception):
+    """The Gemini project has no credits (402) or hit its quota (429): retrying
+    or switching model won't help — the owner has to top up in AI Studio."""
+
+
+def _is_out_of_credits(exc: Exception) -> bool:
+    s = str(exc)
+    return "402" in s or "credits are depleted" in s or ("429" in s and "RESOURCE_EXHAUSTED" in s)
+
+
+def _generate_image(client, models: list[str], contents: list, aspect: str,
+                    thinking: str | None = None) -> tuple[bytes, str, str]:
+    """An image from generate_content: one attempt per model in `models`
+    (repeat a model to retry it), moving on only after a transient server
+    error. Returns (bytes, mime type, the model that made it)."""
     from google.genai import types  # noqa: PLC0415
 
-    config = types.GenerateContentConfig(
-        response_modalities=["IMAGE"],
-        image_config=types.ImageConfig(aspect_ratio=aspect, image_size="1K"),
-        http_options=types.HttpOptions(timeout=IMAGE_TIMEOUT_MS),
-    )
+    def config(think: str | None):
+        return types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(aspect_ratio=aspect, image_size="1K"),
+            http_options=types.HttpOptions(timeout=IMAGE_TIMEOUT_MS),
+            **({"thinking_config": types.ThinkingConfig(thinking_level=think)} if think else {}),
+        )
+
     last: Exception | None = None
-    for _attempt in range(2):
-        try:
-            resp = client.models.generate_content(model=model, contents=contents, config=config)
-            for part in resp.candidates[0].content.parts:
-                if part.inline_data and part.inline_data.data:
-                    return part.inline_data.data, part.inline_data.mime_type or "image/jpeg"
-            raise RuntimeError("no image in the response (it may have been blocked)")
-        except Exception as exc:  # noqa: BLE001
-            last = exc
-            if not any(code in str(exc) for code in ("500", "502", "503", "504", "DEADLINE", "UNAVAILABLE")):
+    for model in models:
+        think = thinking
+        for _ in range(2):  # second pass only if the model rejects the thinking level
+            try:
+                resp = client.models.generate_content(model=model, contents=contents, config=config(think))
+                for part in resp.candidates[0].content.parts:
+                    if part.inline_data and part.inline_data.data:
+                        return part.inline_data.data, part.inline_data.mime_type or "image/jpeg", model
+                raise RuntimeError("no image in the response (it may have been blocked)")
+            except Exception as exc:  # noqa: BLE001
+                if _is_out_of_credits(exc):
+                    raise OutOfCredits(str(exc)) from exc
+                last = exc
+                if think and "thinking level" in str(exc).lower():
+                    think = None
+                    continue
                 break
+        if last is not None and not any(code in str(last) for code in _TRANSIENT):
+            break
+        log.info("image attempt on %s failed (%s); trying next", model, str(last)[:80])
     raise last  # type: ignore[misc]
 
 
@@ -224,7 +255,12 @@ def product_photo(garment: dict, client=None) -> tuple[bytes, str] | None:
     if client is None and not enabled():
         return None
     try:
-        return _generate_image(client or _client(), PRODUCT_IMAGE_MODEL, [product_photo_prompt(garment)], "1:1")
+        data, mime, _model = _generate_image(
+            client or _client(), [PRODUCT_IMAGE_MODEL, PRODUCT_IMAGE_MODEL], [product_photo_prompt(garment)], "1:1",
+        )
+        return data, mime
+    except OutOfCredits:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("gemini product photo failed: %s", exc)
         return None
@@ -242,7 +278,8 @@ _TRYON_PROMPT = (
 )
 
 
-def photo_tryon(person: bytes, garment: bytes, garment_mime: str, what: str, client=None) -> tuple[bytes, str] | None:
+def photo_tryon(person: bytes, garment: bytes, garment_mime: str, what: str,
+                client=None) -> tuple[bytes, str, str] | None:
     """The person's own photo, wearing the garment. A style preview only: the
     image model always makes clothes look good, so fit comes from the fit map."""
     if client is None and not enabled():
@@ -263,7 +300,15 @@ def photo_tryon(person: bytes, garment: bytes, garment_mime: str, what: str, cli
             types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"),
             types.Part.from_bytes(data=garment, mime_type=garment_mime),
         ]
-        return _generate_image(client or _client(), TRYON_IMAGE_MODEL, contents, aspect)
+        return _generate_image(
+            client or _client(),
+            [TRYON_IMAGE_MODEL, TRYON_IMAGE_MODEL, TRYON_FALLBACK_MODEL],
+            contents,
+            aspect,
+            thinking=TRYON_THINKING,
+        )
+    except OutOfCredits:
+        raise
     except Exception as exc:  # noqa: BLE001
         log.warning("gemini photo try-on failed: %s", exc)
         return None

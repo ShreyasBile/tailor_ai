@@ -91,7 +91,11 @@ export class AdminService {
       this.logger.error(`product photo failed: ${String(err)}`);
       throw new AppError('INFERENCE_FAILED', undefined, "We couldn't create a photo right now. Please try again.");
     }
-    if (!res.ok) throw new AppError('INFERENCE_FAILED', { status: res.status }, "We couldn't create a photo right now.");
+    if (!res.ok) {
+      const detail = ((await res.json().catch(() => null)) as { detail?: { message?: string } } | null)?.detail;
+      if (res.status === 402) throw new AppError('QUOTA_EXCEEDED', undefined, detail?.message);
+      throw new AppError('INFERENCE_FAILED', { status: res.status }, "We couldn't create a photo right now.");
+    }
     return (await res.json()) as GeneratedImage;
   }
 

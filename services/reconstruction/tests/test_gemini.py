@@ -201,6 +201,54 @@ def test_photo_tryon_sends_person_then_garment_and_keeps_the_body():
     sent = Image.open(BytesIO(person.inline_data.data))
     assert max(sent.size) <= 1024
     assert garment.inline_data.data == b"\xff\xd8garment"
+    # Minimal thinking keeps a try-on inside the image service's ~13 s window.
+    assert fake.calls[0]["config"].thinking_config.thinking_level.lower() == gemini.TRYON_THINKING
+    assert out[2] == gemini.TRYON_IMAGE_MODEL
+
+
+def test_tryon_falls_back_to_the_faster_model_after_two_timeouts():
+    fake = FakeImages(errors=[RuntimeError("504 DEADLINE_EXCEEDED"), RuntimeError("504 DEADLINE_EXCEEDED")])
+    out = gemini.photo_tryon(b"", b"g", "image/jpeg", "x", client=fake)
+    assert out is None  # b"" is not an image — checked before any call
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (300, 400)).save(buf, format="JPEG")
+    fake = FakeImages(errors=[RuntimeError("504 DEADLINE_EXCEEDED"), RuntimeError("504 DEADLINE_EXCEEDED")])
+    out = gemini.photo_tryon(buf.getvalue(), b"g", "image/jpeg", "x", client=fake)
+    assert [c["model"] for c in fake.calls] == [gemini.TRYON_IMAGE_MODEL, gemini.TRYON_IMAGE_MODEL,
+                                                 gemini.TRYON_FALLBACK_MODEL]
+    assert out is not None and out[2] == gemini.TRYON_FALLBACK_MODEL
+
+
+def test_unsupported_thinking_level_is_dropped_not_fatal():
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (300, 400)).save(buf, format="JPEG")
+    fake = FakeImages(errors=[RuntimeError("400 INVALID_ARGUMENT Thinking level MINIMAL is not supported")])
+    out = gemini.photo_tryon(buf.getvalue(), b"g", "image/jpeg", "x", client=fake)
+    assert out is not None
+    assert fake.calls[1]["config"].thinking_config is None
+
+
+def test_out_of_credits_stops_at_once_and_is_reported():
+    from io import BytesIO
+
+    from PIL import Image
+
+    buf = BytesIO()
+    Image.new("RGB", (300, 400)).save(buf, format="JPEG")
+    fake = FakeImages(errors=[RuntimeError("402 RESOURCE_EXHAUSTED. Your prepayment credits are depleted.")])
+    with pytest.raises(gemini.OutOfCredits):
+        gemini.photo_tryon(buf.getvalue(), b"g", "image/jpeg", "x", client=fake)
+    assert len(fake.calls) == 1  # no retries, no fallback model: they can't help
+    with pytest.raises(gemini.OutOfCredits):
+        gemini.product_photo(KURTA, client=FakeImages(errors=[RuntimeError("402 credits are depleted")]))
 
 
 def test_transient_server_error_is_retried_once():

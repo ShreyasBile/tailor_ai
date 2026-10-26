@@ -5,7 +5,7 @@ import {
   PhotoTryOnRequest,
   RecommendRequest,
   type GarmentDetail,
-  type GeneratedImage,
+  type PhotoTryOnView,
   type GarmentSummary,
   type RecommendationView,
 } from '@tailorai/contracts';
@@ -55,14 +55,20 @@ export class CatalogController {
     return { url: await this.catalog.imageRedirect(slug), statusCode: 302 };
   }
 
-  /** The shopper's scan photo wearing this item (Gemini). Consent per request. */
+  /** The saved photo try-on for this item, if one was made for the current scan. */
+  @Get('garments/:slug/photo-tryon')
+  async savedPhotoTryOn(@CurrentUser() user: AuthedUser, @Param('slug') slug: string): Promise<PhotoTryOnView> {
+    return this.catalog.savedPhotoTryOn(user.id, slug);
+  }
+
+  /** The shopper's scan photo wearing this item (Gemini), made once and saved. Consent per request. */
   @Post('garments/:slug/photo-tryon')
   @HttpCode(200)
   async photoTryOn(
     @CurrentUser() user: AuthedUser,
     @Param('slug') slug: string,
     @Body(zodBody(PhotoTryOnRequest)) _body: PhotoTryOnRequest,
-  ): Promise<GeneratedImage> {
+  ): Promise<PhotoTryOnView> {
     return this.catalog.photoTryOn(user.id, slug);
   }
 
