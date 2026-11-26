@@ -25,6 +25,8 @@ export type {
   ReadSizeChartResponse,
   GeneratedImage,
   PhotoTryOnView,
+  FitPreviewView,
+  FitZone,
 } from '@tailorai/contracts';
 
 export const VIEWS = ['front', 'back', 'left', 'right'] as const;

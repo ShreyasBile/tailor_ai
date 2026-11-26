@@ -1,5 +1,5 @@
 // Garment catalogue for the MVP: six fictional brands, their size charts and
-// thirty-four products. Idempotent — re-running replaces the catalogue in place
+// thirty-five products. Idempotent — re-running replaces the catalogue in place
 // (recommendations and feedback referencing garments are kept by upserting on
 // slug).
 //
@@ -275,6 +275,19 @@ const CHARTS = {
       ['XL', { chest: [107, 115], waist: [92, 100], shoulder_width: [44, 46] }],
     ],
   },
+  // Football jerseys are sized by chest (shoulders are cut generously).
+  'stride-jerseys': {
+    brand: 'stride',
+    category: 'TOPS',
+    sizes: [
+      ['XS', { chest: [80, 88], shoulder_width: [35, 38] }],
+      ['S', { chest: [88, 95], shoulder_width: [37, 40] }],
+      ['M', { chest: [95, 106], shoulder_width: [39, 43] }],
+      ['L', { chest: [106, 114], shoulder_width: [42, 45] }],
+      ['XL', { chest: [114, 122], shoulder_width: [44, 47] }],
+      ['XXL', { chest: [122, 130], shoulder_width: [46, 49] }],
+    ],
+  },
   'stride-bottoms': {
     brand: 'stride',
     category: 'BOTTOMS',
@@ -347,6 +360,8 @@ const GARMENTS = [
     'A straight-cut, calf-length kurta with three-quarter sleeves.'],
   ['stride-training-tee', 'Training Tee', 'stride-tops', 'T-shirts', 'men', 'SLIM', 'HIGH', 'Recycled polyester, 12% elastane', 2900, 'Black', '#1b1c1e',
     'A close-fitting, quick-dry training tee with four-way stretch.'],
+  ['stride-football-jersey', 'Sky Stripe Football Jersey', 'stride-jerseys', 'Jerseys', 'men', 'REGULAR', 'MEDIUM', 'Recycled polyester piqué, moisture-wicking', 3900, 'Sky & White', '#8ec5ea',
+    'A classic sky-blue and white striped football jersey with a ribbed crew collar and trimmed sleeves. Regular fit — sized by chest.'],
   ['stride-zip-hoodie', 'Performance Zip Hoodie', 'stride-tops', 'Hoodies', 'unisex', 'RELAXED', 'MEDIUM', 'Brushed-back polyester fleece', 6900, 'Slate', '#55606e',
     'A relaxed full-zip hoodie in soft brushed fleece with zip pockets.'],
   ['stride-tapered-jogger', 'Tapered Jogger', 'stride-bottoms', 'Joggers', 'unisex', 'REGULAR', 'HIGH', 'Cotton–polyester terry, elastane', 5400, 'Heather Charcoal', '#4a4d52',

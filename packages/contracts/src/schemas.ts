@@ -709,6 +709,48 @@ export const PhotoTryOnRequest = z.object({
 });
 export type PhotoTryOnRequest = z.infer<typeof PhotoTryOnRequest>;
 
+// ─────────────────────────── Fitting room (local photo try-on) ───────────────
+
+export const FitPreviewRequest = z.object({
+  /** Size to show; the recommended one when left out. */
+  size: z.string().min(1).max(12).optional(),
+  /** "product": this item on your photo. "own": the top you're wearing in
+   * your scan photo, at this item's size — how a size up or down would sit. */
+  mode: z.enum(['product', 'own']).default('product'),
+  view: z.enum(['front', 'back']).default('front'),
+  preference: FitPreference.optional(),
+});
+export type FitPreviewRequest = z.infer<typeof FitPreviewRequest>;
+
+export const FitZone = z.object({
+  name: z.string(),
+  label: z.string(),
+  /** bad = too small, warn = snug, good, loose, bad-loose = far too big */
+  tone: z.string(),
+  text: z.string(),
+  /** anchor, as fractions of the image */
+  x: z.number(),
+  y: z.number(),
+});
+export type FitZone = z.infer<typeof FitZone>;
+
+export const FitPreviewView = z.object({
+  imageBase64: z.string(),
+  mimeType: z.string(),
+  width: z.number(),
+  height: z.number(),
+  zones: z.array(FitZone),
+  summary: z.string(),
+  size: z.string(),
+  recommendedSize: z.string(),
+  sizes: z.array(z.object({ label: z.string(), score: z.number(), blocked: z.boolean().optional() })),
+  mode: z.enum(['product', 'own']),
+  view: z.enum(['front', 'back']),
+  backAvailable: z.boolean(),
+  elapsedMs: z.number(),
+});
+export type FitPreviewView = z.infer<typeof FitPreviewView>;
+
 // ─────────────────────────── Accuracy check (tape vs scan) ───────────────────
 
 export const TapeCheckRequest = z.object({

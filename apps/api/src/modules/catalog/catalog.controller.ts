@@ -1,9 +1,11 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Redirect } from '@nestjs/common';
 import {
   FitFeedbackRequest,
+  FitPreviewRequest,
   GarmentCategory,
   PhotoTryOnRequest,
   RecommendRequest,
+  type FitPreviewView,
   type GarmentDetail,
   type PhotoTryOnView,
   type GarmentSummary,
@@ -13,6 +15,7 @@ import { CatalogService } from './catalog.service';
 import { zodBody } from '../../common/zod.pipe';
 import { Public } from '../../common/auth.guard';
 import { CurrentUser, type AuthedUser } from '../../common/current-user.decorator';
+import { loadEnv } from '../../config/env';
 
 @Controller({ version: '1' })
 export class CatalogController {
@@ -70,6 +73,24 @@ export class CatalogController {
     @Body(zodBody(PhotoTryOnRequest)) _body: PhotoTryOnRequest,
   ): Promise<PhotoTryOnView> {
     return this.catalog.photoTryOn(user.id, slug);
+  }
+
+  /** This item (or the top you're wearing) on your own scan photo, in any size. Local, nothing generated. */
+  @Post('garments/:slug/fit-preview')
+  @HttpCode(200)
+  async fitPreview(
+    @CurrentUser() user: AuthedUser,
+    @Param('slug') slug: string,
+    @Body(zodBody(FitPreviewRequest)) body: FitPreviewRequest,
+  ): Promise<FitPreviewView> {
+    return this.catalog.fitPreview(user.id, slug, body);
+  }
+
+  /** Which optional try-on features this deployment has switched on. */
+  @Public()
+  @Get('tryon/capabilities')
+  capabilities() {
+    return { aiPhoto: Boolean(loadEnv().GEMINI_API_KEY?.trim()) };
   }
 
   // ── Find My Size ──

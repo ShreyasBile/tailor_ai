@@ -26,6 +26,7 @@ from .media.select import select_frames
 from .mesh.build import build_mesh
 from .runtime.vram import gpu_info
 from .schemas import (
+    TryOnPreviewRequest,
     FitRecommendRequest,
     PhotoTryOnRequest,
     ProcessScanRequest,
@@ -420,6 +421,27 @@ def photo_tryon(req: PhotoTryOnRequest) -> dict:
         raise HTTPException(status_code=502, detail={"code": "IMAGE_FAILED", "message": "Couldn't create the try-on photo right now."})
     data, out_mime, model = out
     return {"imageBase64": base64.b64encode(data).decode(), "mimeType": out_mime, "model": model}
+
+
+@app.post("/tryon/preview", dependencies=[Depends(require_api_key)])
+def tryon_preview(req: TryOnPreviewRequest) -> dict:
+    """The shopper's own scan photo, re-dressed: a catalogue garment (mode
+    "product") or the outfit they're wearing (mode "own"), in a given size.
+    Local — no generative model, nothing leaves this machine."""
+    from .tryon.parse import ParseError
+    from .tryon.service import Unsupported, preview
+
+    try:
+        return preview(req)
+    except Unsupported as exc:
+        raise HTTPException(status_code=422, detail={"code": "TRYON_UNSUPPORTED", "message": str(exc)}) from exc
+    except ParseError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "TRYON_UNREADABLE", "message": f"We couldn't read your photo for a try-on: {exc}."},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "TRYON_UNSUPPORTED", "message": str(exc)}) from exc
 
 
 @app.post("/process-scan", dependencies=[Depends(require_api_key)])

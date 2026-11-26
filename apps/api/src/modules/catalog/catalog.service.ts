@@ -14,6 +14,8 @@ import {
   type GarmentCategory,
   type GarmentDetail,
   type GarmentSummary,
+  type FitPreviewRequest,
+  type FitPreviewView,
   type GeneratedImage,
   type PhotoTryOnView,
   type RecommendationView,
@@ -193,6 +195,117 @@ export class CatalogService {
       },
     });
     return this.toPhotoView(row);
+  }
+
+  // ── Fitting room: the shopper's own photo, re-dressed, in any size ──
+
+  /**
+   * This item (or the top the shopper is wearing) on their own scan photo,
+   * in the chosen size — drawn from the fit engine's per-size numbers, so a
+   * size too small hugs, pulls and rides up, and a size too big drapes long.
+   * Rendered locally by the reconstruction service: no generative model, and
+   * the photo never leaves this deployment.
+   */
+  async fitPreview(userId: string, slug: string, req: FitPreviewRequest): Promise<FitPreviewView> {
+    const env = loadEnv();
+    const [user, core, garment] = await Promise.all([
+      this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
+      this.prisma.bodyCore.findFirst({
+        where: { userId, isCurrent: true },
+        orderBy: { version: 'desc' },
+        include: { measurements: true, job: { select: { sessionId: true } } },
+      }),
+      this.prisma.garment.findUnique({
+        where: { slug },
+        include: { brand: true, sizeChart: { include: { entries: true } } },
+      }),
+    ]);
+    if (!garment || !garment.isActive) throw new AppError('NOT_FOUND', { slug }, "We couldn't find that item.");
+    if (!core || core.measurements.length === 0 || !core.job) {
+      throw new AppError('NOT_FOUND', { userId }, 'Scan your body first — the fitting room uses your scan photos.');
+    }
+    const photos = await this.prisma.asset.findMany({
+      where: { sessionId: core.job.sessionId, kind: 'RAW_PHOTO' },
+      orderBy: { createdAt: 'desc' },
+    });
+    const viewOf = (a: { metadata: unknown }) => (a.metadata as { view?: string } | null)?.view;
+    const live = photos.filter((a) => !a.expiresAt || a.expiresAt > new Date());
+    const photo = live.find((a) => viewOf(a) === req.view);
+    if (!photo) {
+      throw new AppError(
+        'NOT_FOUND',
+        { userId, view: req.view },
+        req.view === 'back'
+          ? 'Your back photo is no longer stored — rescan to see the back.'
+          : 'Your scan photos are no longer stored — rescan to use the fitting room.',
+      );
+    }
+
+    const preference = req.preference ?? user.fitPreference;
+    const chart = this.toChart(garment.sizeChart);
+    const body = Object.fromEntries(
+      core.measurements.map((m) => [m.name, { value: m.valueCm, confidence: m.confidence }]),
+    );
+    const fit = await this.callFitEngine({
+      body,
+      garment: {
+        category: garment.category.toLowerCase(),
+        subcategory: garment.subcategory,
+        fitIntent: garment.fitIntent.toLowerCase(),
+        stretch: garment.stretch.toLowerCase(),
+      },
+      sizeChart: chart.sizes,
+      preference: preference.toLowerCase(),
+    });
+    const size = req.size && fit.sizes.some((s) => s.label === req.size) ? req.size : fit.recommendedSize;
+    const heightCm = core.heightCm ?? user.heightCm;
+    if (!heightCm) throw new AppError('HEIGHT_REQUIRED');
+
+    let res: Response;
+    try {
+      res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/tryon/preview`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
+        body: JSON.stringify({
+          personImageUrl: (await this.storage.presignGet(photo.storageKey, 600)).url,
+          personKey: photo.storageKey,
+          heightCm,
+          view: req.view,
+          mode: req.mode,
+          garment: {
+            slug: garment.slug,
+            name: garment.name,
+            category: garment.category.toLowerCase(),
+            subcategory: garment.subcategory,
+            description: garment.description,
+            imageUrl: garment.imageUrl ? await this.fetchableImage(slug, garment.imageUrl) : null,
+          },
+          sizes: fit.sizes,
+          size,
+          recommended: fit.recommendedSize,
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+    } catch (err) {
+      this.logger.error(`fit preview failed: ${String(err)}`);
+      throw new AppError('INFERENCE_FAILED', undefined, "We couldn't draw your try-on right now. Please try again.");
+    }
+    if (!res.ok) {
+      const detail = ((await res.json().catch(() => null)) as { detail?: { code?: string; message?: string } } | null)
+        ?.detail;
+      this.logger.warn(`fit preview ${res.status}: ${detail?.code ?? ''} ${detail?.message ?? ''}`);
+      if (res.status === 422 && detail?.message) throw new AppError('VALIDATION_FAILED', { slug }, detail.message);
+      throw new AppError('INFERENCE_FAILED', undefined, "We couldn't draw your try-on right now. Please try again.");
+    }
+    const out = (await res.json()) as Omit<FitPreviewView, 'recommendedSize' | 'sizes' | 'mode' | 'view' | 'backAvailable'>;
+    return {
+      ...out,
+      recommendedSize: fit.recommendedSize,
+      sizes: fit.sizes.map((s) => ({ label: s.label, score: s.score, blocked: s.blocked })),
+      mode: req.mode,
+      view: req.view,
+      backAvailable: live.some((a) => viewOf(a) === 'back'),
+    };
   }
 
   // ── Catalogue ──

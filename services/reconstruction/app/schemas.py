@@ -366,3 +366,28 @@ class ProcessScanRequest(BaseModel):
     scan_id: str
     height_cm: float = Field(gt=50, lt=260)
     images: ProcessScanImages
+
+
+# ── /tryon/preview (local photo try-on and size preview) ──
+
+
+class TryOnGarment(BaseModel):
+    slug: str
+    name: str = ""
+    category: str = "tops"
+    subcategory: str = ""
+    description: str = ""
+    imageUrl: str | None = None
+
+
+class TryOnPreviewRequest(BaseModel):
+    personImageUrl: str
+    personKey: str  # stable id of the photo, for caching its parse
+    heightCm: float = Field(gt=50, lt=260)
+    view: Literal["front", "back"] = "front"
+    mode: Literal["product", "own"] = "product"
+    garment: TryOnGarment
+    sizes: list[dict]  # the fit engine's per-size results, with dimensions
+    size: str
+    recommended: str
+    amplify: float = Field(default=1.0, ge=0.5, le=2.0)

@@ -8,6 +8,7 @@ import { fmtNumber, fmtPrice, relativeDate, titleCase, type Units } from '@/lib/
 import { useSession } from '@/lib/session';
 import type { FitDimension, FitPreference, GarmentDetail, PhotoTryOnView, RecommendationView } from '@/lib/types';
 import { ProductImage } from '@/components/garment-art';
+import { FittingRoom } from '@/components/fitting-room';
 import { ScoreRing } from '@/components/score-ring';
 import { Badge, Button, ButtonLink, Card, Segmented, Spinner, cx } from '@/components/ui';
 
@@ -44,19 +45,23 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
   const [needsScan, setNeedsScan] = useState(false);
   const [units, setUnits] = useState<Units>('cm');
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
-  const [view, setView] = useState<'product' | 'photo'>('product');
-  // A try-on photo made earlier for this item: open on it straight away.
+  const [view, setView] = useState<'product' | 'onme' | 'photo'>('product');
+  // A Gemini try-on photo made earlier for this item (optional feature).
   const [saved, setSaved] = useState<PhotoTryOnView | null>(null);
+  const [aiPhoto, setAiPhoto] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
+    api<{ aiPhoto: boolean }>('/tryon/capabilities', { auth: false })
+      .then((c) => setAiPhoto(c.aiPhoto))
+      .catch(() => setAiPhoto(false));
+  }, []);
+
+  useEffect(() => {
+    if (!user || !aiPhoto) return;
     api<PhotoTryOnView>(`/garments/${slug}/photo-tryon`)
-      .then((p) => {
-        setSaved(p);
-        setView('photo');
-      })
+      .then(setSaved)
       .catch(() => setSaved(null));
-  }, [user, slug]);
+  }, [user, slug, aiPhoto]);
 
   useEffect(() => {
     api<GarmentDetail>(`/garments/${slug}`, { auth: false })
@@ -84,6 +89,8 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
           setRec(r);
           setPref(r.preference);
           setSelectedSize(r.recommendedSize);
+          // Already sized for this item: open the fitting room straight away.
+          setView('onme');
         }
       })
       .catch(() => {});
@@ -135,7 +142,7 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
         {/* product — min-w-0 lets the size-chart table scroll inside its card
             instead of widening the grid column past a phone's screen */}
         <div className="min-w-0">
-          {user && g.imageUrl && (
+          {user && (
             <div className="mb-3">
               <Segmented
                 size="sm"
@@ -143,12 +150,25 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
                 onChange={setView}
                 options={[
                   { value: 'product', label: 'Product' },
-                  { value: 'photo', label: 'Photo try-on' },
+                  { value: 'onme', label: 'On me' },
+                  ...(aiPhoto && g.imageUrl ? [{ value: 'photo' as const, label: 'AI photo' }] : []),
                 ]}
               />
             </div>
           )}
-          {view === 'photo' && user && g.imageUrl ? (
+          {view === 'onme' && user ? (
+            <FittingRoom
+              slug={g.slug}
+              garmentName={g.name}
+              category={g.category}
+              rec={rec}
+              selectedSize={selectedSize}
+              onSelectSize={setSelectedSize}
+              preference={pref}
+              onNeedSize={() => findSize(pref)}
+              busy={busy}
+            />
+          ) : view === 'photo' && user && g.imageUrl ? (
             <PhotoTryOn slug={g.slug} garmentName={g.name} imageUrl={g.imageUrl} saved={saved} onSaved={setSaved} />
           ) : (
             <Card className={cx('aspect-square overflow-hidden bg-gradient-to-b from-[#fbfaf6] to-[#efece4]', !g.imageUrl && 'p-12')}>
