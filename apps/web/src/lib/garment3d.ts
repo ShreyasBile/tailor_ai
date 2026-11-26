@@ -524,7 +524,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
   let loose = clamp01((key - 3) / 13);
   for (const nm of ['chest', 'waist', 'hip']) {
     const d = dims.get(nm);
-    if (d && d.verdict === 'too tight') tight = Math.max(tight, Math.min(1, 0.55 + (d.outsideCm ?? 0) / 10));
+    if (d && d.verdict === 'too tight') tight = Math.max(tight, Math.min(1, 0.45 + (d.outsideCm ?? 0) / 14));
   }
   if (input.plain) tight = loose = 0;
   const step = input.plain ? 0 : input.step;
@@ -559,13 +559,16 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
     hemF = Math.max(ANKLE, want);
     stackCm = Math.max(0, (ANKLE - want) * H * 100);
   }
-  if (!bottom && !spec.drape) hemF = Math.max(hemF, l.crotch + 0.012);
+  if (!bottom) hemF = Math.max(hemF, 0.2);
   const hemY0 = y0 + hemF * H;
   // Plain companion trousers sit at mid-rise, like most jeans.
   const topF = input.plain && bottom ? (l.waist + l.hip) / 2 + 0.01 : spec.top(l);
   const topY = y0 + topF * H;
-  const drapeF = spec.drape ? (bottom ? l.hip : l.hip - 0.01) : -1;
-  const longTop = spec.drape && hemF < drapeF;
+  // A top long enough to reach the crotch hangs from just above it, as cloth
+  // does, rather than following the legs apart.
+  const hangs = !bottom && !spec.drape && hemF < l.crotch + 0.035;
+  const drapeF = spec.drape ? (bottom ? l.hip : l.hip - 0.01) : hangs ? l.crotch + 0.045 : -1;
+  const longTop = !bottom && (spec.drape || hangs) && hemF < drapeF;
 
   // Drape: how much of the room falls straight rather than following the body.
   const lam = clamp(0.64 + 0.34 * loose - 0.95 * tight - (input.fitIntent === 'SLIM' ? 0.2 : 0), 0, 0.97);
@@ -689,7 +692,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
   let reach = spec.sleeve === 'long' ? garmentArm : SLEEVE_FRAC[spec.sleeve] * armLen + 0.012 * step;
   reach -= 0.02 * tight;
   const armEase = Math.max(1, 0.4 * easeChest + 5) * (1 - 0.7 * tight);
-  const yokeEase = toM(Math.max(0.5, 0.25 * easeChest + 2)) + thick;
+  const yokeEase = toM(Math.max(0.5, (0.25 + 0.3 * loose) * easeChest + 2)) + thick;
   const yokeY = y0 + ((b.armpitK + 0.5) / nb) * H;
   // Sleeve length runs straight down each arm from the shoulder point (the
   // rest pose holds the arms straight), so cuffs are clean cuts across it.
@@ -800,6 +803,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
     q = new THREE.Vector3();
   const OUT = -0.02;
   const vSpan = Math.max(0.05, topY - hemY0);
+  const crotchY = y0 + l.crotch * H;
   const panelV = (y: number) => clamp(0.25 + 0.75 * ((y - hemY0) / vSpan), 0.252, 0.998);
   const q2 = new THREE.Vector3(),
     fwd = new THREE.Vector3();
@@ -836,9 +840,9 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
     if (pt === 'torso') {
       // Above the armpit (yoke, shoulders): just off the body. Below: the hull.
       const w = bottom
-        ? 1 - smoothstep(topY + 0.02 * s, topY + 0.06 * s, v.y)
-        : 1 - smoothstep(yokeY - 0.03 * s, yokeY + 0.04 * s, v.y);
-      const yoke = v.clone().addScaledVector(nv, bottom ? thick : yokeEase);
+        ? (1 - smoothstep(topY + 0.02 * s, topY + 0.06 * s, v.y)) * smoothstep(crotchY, crotchY + 0.05 * s, v.y)
+        : 1 - smoothstep(yokeY - 0.03 * s, yokeY + 0.08 * s, v.y);
+      const yoke = v.clone().addScaledVector(nv, bottom ? thick + 0.6 * toM(interp(torsoKnots, f)) : yokeEase);
       if (w > 0 && kf >= kBot - 1) {
         const rb = Math.hypot(v.x - b.ax, v.z - b.az);
         const rg = Math.max(sampleG(kf, jf), rb + thick);
@@ -851,7 +855,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
         zone = nearestZone(f, l, dims, ['waist', 'hip']);
       } else {
         const no = neckOpen(v, nv);
-        const lowEdge = longTop ? y0 + (drapeF - 0.012) * H : hemY(v.x, v.z);
+        const lowEdge = longTop ? y0 + (drapeF - 0.003) * H : hemY(v.x, v.z);
         c = Math.min(v.y - lowEdge, no);
         trim = no;
         // Out past the shoulder point the cloth is sleeve, whatever the
@@ -868,6 +872,12 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
             if (out2 > 0) {
               c = Math.min(c, reach - along);
               trim = Math.min(trim, reach - along);
+              // Past the armhole: the sleeve's own room (as on the underside),
+              // so cap and underside open evenly at the cuff.
+              const t = clamp01(along / Math.max(reach, 0.05));
+              const offM = toM(armEase) * (1 + 0.5 * loose * t) + thick;
+              const sleevePos = v.clone().addScaledVector(nv, offM);
+              out = out.lerp(sleevePos, smoothstep(0, 0.03 * s, out2));
             }
             sleeveUV(i, side, v, along);
             seamV[i] = out2;
@@ -902,7 +912,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
         q.divideScalar(rl);
         const along = alongArm(pt, v);
         const t = clamp01(along / Math.max(reach, 0.05));
-        const offM = toM(armEase) * (1 + 0.7 * loose * t) + thick + 0.008 * s * loose * t * Math.max(0, -q.y);
+        const offM = toM(armEase) * (1 + 0.5 * loose * t) + thick;
         out = cp
           .clone()
           .addScaledVector(tg, al)
@@ -931,6 +941,11 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
         const rb = Math.hypot(v.x - cc[0], v.z - cc[1]);
         const rg = Math.max(sampleRing(gr, ljf), rb + thick);
         out = new THREE.Vector3(cc[0] + Math.cos(lth) * rg, v.y, cc[1] + Math.sin(lth) * rg);
+        const atCrotch = smoothstep(crotchY - 0.05 * s, crotchY - 0.005 * s, v.y);
+        if (atCrotch > 0) {
+          const hug = v.clone().addScaledVector(nv, thick + 0.6 * toM(interp(legKnots, f)));
+          out.lerp(hug, atCrotch);
+        }
         c = v.y - hemY0;
         const S = arcTable(gr);
         UVL[i * 2] = sampleArc(S, ljf) / tileM;
@@ -1042,6 +1057,20 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
   for (let t = 0; t < index.count; t += 3) {
     const ids = [index.getX(t), index.getX(t + 1), index.getX(t + 2)];
     if (ids.every((i) => cov[i]! < 0)) continue;
+    {
+      // The hull can fold a face over (under a belly, at the crotch): turn it
+      // to face out, or it renders as a dark sliver.
+      const [i0, i1, i2] = ids as [number, number, number];
+      pa.fromArray(P, i0 * 3);
+      pb.fromArray(P, i1 * 3);
+      pc.fromArray(P, i2 * 3);
+      oa.fromBufferAttribute(pos, i0);
+      ob.fromBufferAttribute(pos, i1);
+      oc.fromBufferAttribute(pos, i2);
+      fn.crossVectors(e1.subVectors(pb, pa), e2.subVectors(pc, pa));
+      on.crossVectors(e1.subVectors(ob, oa), e2.subVectors(oc, oa));
+      if (fn.dot(on) < 0) ids.reverse();
+    }
     const poly = clipPoly(ids.map(rec), (r) => r[R.cov]!);
     if (poly.length < 3) continue;
     const sv = ids.map((i) => seamV[i]!);
@@ -1061,7 +1090,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
   }
 
   // ── the hang below the hip (kurtas, coats, dresses, skirts) ──
-  if (spec.drape && hemF < drapeF) {
+  if ((spec.drape || hangs) && hemF < drapeF) {
     const kStart = bandOf(y0 + drapeF * H);
     const kEnd = Math.max(0, Math.floor(hemF * nb));
     const flare = spec.flare * Math.sqrt(cut) * (H / nb);
@@ -1069,9 +1098,10 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
     const rings: { y: number; r: Float64Array; S: Float64Array }[] = [];
     for (let k = kStart; k >= kEnd; k--) {
       const tr = b.trunk[k];
-      const y = k === kEnd ? hemY0 : y0 + ((k + 0.5) / nb) * H;
+      const y = k === kEnd ? hemY0 : k === kStart ? y0 + drapeF * H : y0 + ((k + 0.5) / nb) * H;
       const offk = toM(interp(torsoKnots, (k + 0.5) / nb)) + thick;
-      const base = tr ? tr.map((r) => r + offk) : ring!;
+      const under = input.over?.[k];
+      const base = tr ? tr.map((r, j) => Math.max(r + offk + layer, under ? under[j]! + 0.005 * s : 0)) : ring!;
       const step2 = (k + 0.5) / nb < l.hip ? flare : 0;
       let next: Float64Array = ring ? base.map((r, j) => Math.max(r, ring![j]! + step2)) : base;
       next = smoothRing(next, 2).map((r, j) => Math.max(r, ring ? ring[j]! : 0));
@@ -1092,9 +1122,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
     const vert = (rg: (typeof rings)[number], j: number): number[] => {
       const th = angleOf(j);
       const r = rg.r[j % NA]!;
-      const ref = rings[0]!.S;
-      let u = bottom ? rg.S[j]! / tileM : 0.25 + (sampleArc(ref, J_FRONT) - sampleArc(ref, j)) / ref[NA]!;
-      if (!bottom) u = ((u % 1) + 1) % 1;
+      const u = bottom ? rg.S[j]! / tileM : uRound(0, j % NA);
       const col = input.plain ? fallback : zoneAt(rg.y);
       const vv = bottom ? rg.y / tileM : panelV(rg.y);
       return [

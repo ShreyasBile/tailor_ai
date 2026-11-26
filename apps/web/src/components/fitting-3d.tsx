@@ -263,7 +263,10 @@ function Scene(p: SceneProps) {
     });
     if (!tiled && !bottom && result.tight > 0.2) {
       m.normalMap = getStrainMap();
-      m.normalScale = new THREE.Vector2(0.4 * result.tight, 0.4 * result.tight);
+      // Strain grows faster than tightness: a size that is a little small barely
+      // creases, one that is far too small pulls hard.
+      const k = 0.45 * result.tight ** 2;
+      m.normalScale = new THREE.Vector2(k, k);
     }
     return m;
   }, [p.fitMap, p.tex, p.colorHex, tiled, bottom, result.tight]);
