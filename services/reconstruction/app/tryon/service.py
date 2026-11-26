@@ -44,9 +44,8 @@ def _parsed(person_key: str, url: str, height_cm: float, view: str) -> parse_mod
 def preview(req) -> dict:
     started = time.perf_counter()
     cat = req.garment.category.lower()
-    if cat not in TOP_CATEGORIES:
-        raise Unsupported("Seeing trousers, shorts and skirts on your photo isn't available yet — "
-                          "the size details below still apply.")
+    if cat not in TOP_CATEGORIES and req.mode == "own":
+        raise Unsupported("“What I'm wearing” shows tops. For trousers, try this item on instead.")
     sizes_sig = hashlib.sha1(json.dumps(req.sizes, sort_keys=True, default=str).encode()).hexdigest()[:12]
     rkey = "|".join([req.personKey, f"{req.heightCm:.1f}", req.view, req.mode, req.garment.slug,
                      req.garment.imageUrl or "", req.size, req.recommended, sizes_sig, f"{req.amplify:.2f}"])
@@ -59,14 +58,18 @@ def preview(req) -> dict:
     p = _parsed(req.personKey, req.personImageUrl, req.heightCm, req.view)
     g = geometry(req.size, req.sizes, req.recommended, cat, amplify=req.amplify)
     sampler = None
-    if req.mode == "product":
+    if cat not in TOP_CATEGORIES:
+        out = _bottoms(p, g, req)
+    elif req.mode == "product":
         if not req.garment.imageUrl:
             raise Unsupported("This item has no product photo to try on yet.")
         gar = read_cached(f"{req.garment.slug}|{req.garment.imageUrl}", fetch_image(req.garment.imageUrl), "top")
         style = style_for(req.garment.slug, req.garment.subcategory, req.garment.name,
                           req.garment.description, cat)
         sampler = ProductSampler(gar, style, p)
-    out = render(p, g, sampler)
+        out = render(p, g, sampler)
+    else:
+        out = render(p, g, None)
 
     img = out.image
     if img.shape[0] > MAX_OUT_H:
@@ -93,3 +96,62 @@ def preview(req) -> dict:
     log.info("try-on %s %s %s %s: %d ms", req.mode, req.garment.slug, req.size, req.view,
              int((time.perf_counter() - started) * 1000))
     return {**result, "cached": False, "elapsedMs": int((time.perf_counter() - started) * 1000)}
+
+
+def _bottoms(p, g, req):
+    """Trousers, shorts and skirts on the photo."""
+    import numpy as np
+
+    from ..scan import pose as P
+    from .bottoms import kind_of, render_bottoms
+    from .product import fabric_patch
+    from .render import Rendered
+
+    if not req.garment.imageUrl:
+        raise Unsupported("This item has no product photo to try on yet.")
+    gar = read_cached(f"{req.garment.slug}|{req.garment.imageUrl}|bottom", fetch_image(req.garment.imageUrl), "bottom")
+    kind = kind_of(req.garment.slug, req.garment.subcategory, req.garment.name)
+    # product px per photo px, from the waist widths
+    rows = [np.nonzero(p.bottom[y])[0] for y in range(p.hem_y + 4, min(p.hem_y + 30, p.bottom.shape[0]))]
+    widths = [r[-1] - r[0] for r in rows if len(r) > 10]
+    k = (2 * gar.body_half) / max(float(np.median(widths)) if widths else 200.0, 1.0)
+    canvas, bottom, crotch = render_bottoms(p, g, gar, kind, fabric_patch(gar), k)
+
+    h, w = canvas.shape[:2]
+    ys, xs = np.nonzero(p.person)
+    pad_x = int(0.22 * (xs.max() - xs.min()))
+    pad_y = int(0.03 * (ys.max() - ys.min()))
+    x0, x1 = max(0, xs.min() - pad_x), min(w, xs.max() + pad_x)
+    # From the chest down: the part that shows how trousers fit.
+    y0 = max(0, int(p.shoulder_y - 0.15 * p.torso_len))
+    y1 = min(h, ys.max() + pad_y)
+    crop = canvas[y0:y1, x0:x1]
+    cw, ch = x1 - x0, y1 - y0
+
+    def at(x, y):
+        return {"x": round(float((x - x0) / cw), 4), "y": round(float((y - y0) / ch), 4)}
+
+    def edge(y, side):
+        r = np.nonzero(p._pants[int(np.clip(y, 0, h - 1))])[0]
+        if not len(r):
+            return None
+        return float(r[-1] if side > 0 else r[0])
+
+    anchors = {}
+    yw = p.hem_y + 0.04 * p.torso_len
+    if edge(yw, 1) is not None:
+        anchors["waist"] = at(edge(yw, 1) - 3, yw)
+    yh = p.hip_y + 0.12 * p.torso_len
+    if edge(yh, -1) is not None:
+        anchors["hip"] = at(edge(yh, -1) + 3, yh)
+    yt = crotch + 0.12 * p.torso_len
+    if edge(yt, 1) is not None:
+        anchors["thigh"] = at(edge(yt, 1) - 3, yt)
+    la = p.lm[P.L_ANKLE, :2] if p.lm[P.L_ANKLE, 0] < p.lm[P.R_ANKLE, 0] else p.lm[P.R_ANKLE, :2]
+    anchors["inseam"] = at(la[0], min(bottom, la[1]) - 4)
+    zones = []
+    for z in g.zones:
+        a = anchors.get(z.name)
+        if a is not None:
+            zones.append({"name": z.name, "label": z.label, "tone": z.tone, "text": z.text, **a})
+    return Rendered(crop, zones, g.summary)
