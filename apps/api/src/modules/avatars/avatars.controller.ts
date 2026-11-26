@@ -41,6 +41,12 @@ export class AvatarsController {
     return this.avatars.getLatestRender(user.id);
   }
 
+  /** MakeHuman helper layers for the latest avatar (3D fitting room). */
+  @Get('me/avatar/helpers')
+  async helpers(@CurrentUser() user: AuthedUser): Promise<{ count: number; positions: string; bodyCoreId: string }> {
+    return this.avatars.getBodyHelpers(user.id);
+  }
+
   @Get('avatars/:id')
   async getRender(
     @CurrentUser() user: AuthedUser,

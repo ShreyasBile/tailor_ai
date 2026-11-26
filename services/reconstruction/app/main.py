@@ -277,6 +277,19 @@ async def mesh_build(req: BuildMeshRequest) -> BuildMeshResponse:
     return build_mesh(req)
 
 
+@app.post("/body/helpers", dependencies=[Depends(require_api_key)])
+def body_helpers(req: MeasureRequest) -> dict:
+    """MakeHuman's helper layers (tights, skirt) for an Anny shape, in the
+    avatar GLB's frame: what the shop's 3D garments hang on. Sync on purpose
+    (FastAPI runs it in a thread): it's a model evaluation, ~0.1 s."""
+    import base64
+
+    from .bodymodel import mh_helpers
+
+    h = mh_helpers.helpers(req.shape, req.metricScale)
+    return {"count": int(len(h)), "positions": base64.b64encode(h.tobytes()).decode("ascii")}
+
+
 # ─────────────────────────── measurement plane ───────────────────────────
 
 

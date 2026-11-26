@@ -156,19 +156,19 @@ def main() -> None:
     step("Find My Size")
     garments = c.get("/garments").raise_for_status().json()
     check(len(garments) >= 10, f"catalogue has {len(garments)} garments")
-    rec = c.post("/garments/northline-oxford-shirt/recommend", json={}).raise_for_status().json()
+    rec = c.post("/garments/northline-crew-tee/recommend", json={}).raise_for_status().json()
     check(bool(rec["recommendedSize"]) and 0 <= rec["fitScore"] <= 100,
-          f"oxford shirt → size {rec['recommendedSize']}, fit {rec['fitScore']} ({rec['fitLabel']})")
+          f"crew tee → size {rec['recommendedSize']}, fit {rec['fitScore']} ({rec['fitLabel']})")
     # Rules text, or (GEMINI_API_KEY set) Gemini's rewrite, which must name the size.
     explained = (rec["explanation"].startswith("We recommend")
                  or (rec.get("explanationSource", "").startswith("gemini")
                      and rec["recommendedSize"] in rec["explanation"]))
     check(len(rec["dimensions"]) >= 3 and explained,
           f"recommendation explains the key dimensions ({rec.get('explanationSource', 'rules')})")
-    jeans = c.post("/garments/denim-theory-straight/recommend", json={"preference": "LOOSE"}).raise_for_status().json()
-    check(any(d["name"] == "inseam" for d in jeans["dimensions"]), f"jeans use waist/hip/inseam → {jeans['recommendedSize']}")
-    snug = c.post("/garments/northline-oxford-shirt/recommend", json={"preference": "SNUG"}).json()
-    loose = c.post("/garments/northline-oxford-shirt/recommend", json={"preference": "LOOSE"}).json()
+    trousers = c.post("/garments/denim-theory-cargo-pant/recommend", json={"preference": "LOOSE"}).raise_for_status().json()
+    check(any(d["name"] == "inseam" for d in trousers["dimensions"]), f"trousers use waist/hip/inseam → {trousers['recommendedSize']}")
+    snug = c.post("/garments/northline-crew-tee/recommend", json={"preference": "SNUG"}).json()
+    loose = c.post("/garments/northline-crew-tee/recommend", json={"preference": "LOOSE"}).json()
     order = ["XS", "S", "M", "L", "XL", "XXL"]
     check(order.index(snug["recommendedSize"]) <= order.index(loose["recommendedSize"]),
           f"preference moves the size the right way (snug {snug['recommendedSize']} ≤ loose {loose['recommendedSize']})")

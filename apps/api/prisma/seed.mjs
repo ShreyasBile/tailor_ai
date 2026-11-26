@@ -12,7 +12,7 @@
 // each brand runs slightly differently on purpose, so the same body gets
 // different sizes across brands — the point of the product.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 
@@ -301,78 +301,9 @@ const CHARTS = {
   },
 };
 
-const GARMENTS = [
-  ['northline-oxford-shirt', 'Oxford Button-Down', 'northline-mens-tops', 'Shirts', 'men', 'REGULAR', 'NONE', '100% cotton oxford', 6900, 'Pale Blue', '#a9c4e0',
-    'A crisp, breathable oxford with a soft button-down collar. Regular fit through the chest and waist.'],
-  ['northline-essential-tee', 'Essential Crew Tee', 'northline-mens-tops', 'T-shirts', 'men', 'REGULAR', 'LOW', '100% organic cotton jersey', 2800, 'Heather Grey', '#9aa0a6',
-    'The everyday tee, cut from mid-weight organic cotton that keeps its shape wash after wash.'],
-  ['northline-merino-crew', 'Merino Crew Sweater', 'northline-mens-tops', 'Knitwear', 'men', 'SLIM', 'MEDIUM', '100% extra-fine merino', 11900, 'Navy', '#1f2a44',
-    'Fine-gauge merino with a slim, close fit — layer it under a coat or wear it alone.'],
-  ['northline-fitted-tee', 'Fitted Rib Tee', 'northline-womens-tops', 'T-shirts', 'women', 'SLIM', 'HIGH', '94% cotton, 6% elastane rib', 3200, 'Ivory', '#efe9dc',
-    'A close-fitting ribbed tee with plenty of stretch. Designed to sit close to the body.'],
-  ['northline-poplin-blouse', 'Poplin Blouse', 'northline-womens-tops', 'Shirts', 'women', 'RELAXED', 'NONE', '100% cotton poplin', 7400, 'White', '#f7f7f5',
-    'A relaxed, slightly oversized poplin shirt with a dropped shoulder.'],
-  ['northline-field-jacket', 'Field Jacket', 'northline-outerwear', 'Jackets', 'unisex', 'REGULAR', 'NONE', 'Waxed cotton canvas', 18900, 'Olive', '#5d6440',
-    'A four-pocket waxed cotton jacket with room to layer a sweater underneath.'],
-  ['northline-wool-overcoat', 'Wool Overcoat', 'northline-outerwear', 'Coats', 'unisex', 'RELAXED', 'NONE', '80% wool, 20% cashmere', 34900, 'Camel', '#b38b59',
-    'A relaxed single-breasted overcoat in a soft wool–cashmere blend.'],
-  ['atelier-nove-dress-shirt', 'Tailored Dress Shirt', 'atelier-nove-shirts', 'Shirts', 'men', 'SLIM', 'LOW', '100% two-ply cotton', 12900, 'White', '#fafafa',
-    'A sharply tailored shirt with a spread collar. Slim European cut — sized by chest.'],
-  ['atelier-nove-linen-shirt', 'Linen Camp Shirt', 'atelier-nove-shirts', 'Shirts', 'men', 'REGULAR', 'NONE', '100% European linen', 11500, 'Sand', '#d8c7a6',
-    'A camp-collar linen shirt with a straight hem, made to be worn untucked.'],
-  ['atelier-nove-wrap-dress', 'Silk Wrap Dress', 'atelier-nove-dresses', 'Dresses', 'women', 'REGULAR', 'LOW', '100% silk crepe', 24500, 'Burgundy', '#6e1f2f',
-    'A fluid wrap dress in silk crepe, defined at the waist.'],
-  ['atelier-nove-sheath-dress', 'Tailored Sheath Dress', 'atelier-nove-dresses', 'Dresses', 'women', 'SLIM', 'MEDIUM', 'Stretch wool crepe', 21900, 'Black', '#1a1a1a',
-    'A close-fitting sheath in stretch wool crepe, fitted through the waist and hip.'],
-  ['denim-theory-straight', 'Straight Selvedge Jean', 'denim-theory-jeans', 'Jeans', 'men', 'REGULAR', 'LOW', '13.5 oz selvedge denim, 1% elastane', 13800, 'Indigo', '#24324d',
-    'A classic straight leg in rigid-feel selvedge denim with a touch of stretch.'],
-  ['denim-theory-slim-chino', 'Slim Chino', 'denim-theory-jeans', 'Trousers', 'men', 'SLIM', 'MEDIUM', 'Cotton twill, 2% elastane', 8900, 'Khaki', '#bba77f',
-    'A slim, tapered chino with enough stretch to move in.'],
-  ['denim-theory-high-rise', 'High-Rise Wide Leg', 'denim-theory-womens', 'Jeans', 'women', 'RELAXED', 'LOW', '12 oz denim', 12800, 'Mid Wash', '#5a7393',
-    'A high-rise wide-leg jean that sits at the natural waist.'],
-  ['kinfolk-heavy-tee', 'Heavyweight Boxy Tee', 'kinfolk-unisex', 'T-shirts', 'unisex', 'OVERSIZED', 'NONE', '240 gsm cotton', 3800, 'Bone', '#e6dfd0',
-    'A boxy, heavyweight tee with dropped shoulders. Cut generously — many people size down.'],
-  ['kinfolk-easy-trouser', 'Easy Trouser', 'kinfolk-bottoms', 'Trousers', 'unisex', 'RELAXED', 'HIGH', 'Brushed cotton, elastic waist', 7800, 'Charcoal', '#3b3d40',
-    'A relaxed pull-on trouser with an elasticated waist and a tapered leg.'],
-  ['northline-pique-polo', 'Piqué Polo', 'northline-mens-tops', 'Polos', 'men', 'REGULAR', 'LOW', '100% cotton piqué', 4500, 'Forest Green', '#2f4f3a',
-    'A two-button piqué polo with a ribbed collar. Regular fit, slightly longer at the back.'],
-  ['northline-pleated-midi', 'Pleated Midi Skirt', 'northline-womens-skirts', 'Skirts', 'women', 'RELAXED', 'NONE', '100% recycled polyester satin', 6900, 'Dusty Rose', '#c48b8f',
-    'A fluid knife-pleated midi skirt that sits at the natural waist.'],
-  ['atelier-nove-wool-blazer', 'Wool Two-Button Blazer', 'atelier-nove-blazers', 'Blazers', 'men', 'SLIM', 'LOW', '100% virgin wool', 29900, 'Charcoal', '#3a3d42',
-    'A half-canvassed two-button blazer with a slim European cut — sized by chest.'],
-  ['atelier-nove-womens-blazer', 'Tailored Single-Breasted Blazer', 'atelier-nove-womens-blazers', 'Blazers', 'women', 'REGULAR', 'LOW', 'Wool blend crepe', 25900, 'Ecru', '#e6dcc8',
-    'A sharp single-breasted blazer with structured shoulders and a nipped waist.'],
-  ['denim-theory-chino-short', 'Chino Short', 'denim-theory-shorts', 'Shorts', 'men', 'REGULAR', 'LOW', 'Cotton twill, 2% elastane', 5900, 'Stone', '#c9bda5',
-    'A 7-inch chino short with a flat front and a touch of stretch.'],
-  ['denim-theory-trucker', 'Denim Trucker Jacket', 'denim-theory-jackets', 'Jackets', 'unisex', 'REGULAR', 'NONE', '13 oz rigid denim', 11900, 'Light Wash', '#8aa3c2',
-    'The classic trucker jacket in rigid denim — room for a hoodie underneath.'],
-  ['kinfolk-shirt-dress', 'Linen Shirt Dress', 'kinfolk-dresses', 'Dresses', 'women', 'RELAXED', 'NONE', '100% washed linen', 13900, 'Terracotta', '#b5583a',
-    'A relaxed button-through shirt dress with a self-tie belt and midi length.'],
-  ['desi-loom-cotton-kurta', 'Handloom Cotton Kurta', 'desi-loom-mens-kurtas', 'Kurtas', 'men', 'REGULAR', 'NONE', '100% handloom cotton', 3900, 'Saffron', '#e08a2c',
-    'A knee-length handloom kurta with a mandarin collar and side slits.'],
-  ['desi-loom-linen-kurta', 'Linen Short Kurta', 'desi-loom-mens-kurtas', 'Kurtas', 'men', 'SLIM', 'NONE', 'Cotton–linen blend', 4600, 'Ivory', '#f1ead8',
-    'A slim, hip-length kurta in breathable cotton–linen — wears well with jeans.'],
-  ['desi-loom-nehru-jacket', 'Nehru Jacket', 'desi-loom-nehru-jackets', 'Nehru Jackets', 'men', 'SLIM', 'NONE', 'Silk-blend jacquard', 5900, 'Midnight Blue', '#1f2d4d',
-    'A sleeveless bandhgala-collar jacket to layer over a kurta.'],
-  ['desi-loom-anarkali', 'Anarkali Kurta', 'desi-loom-womens-kurtas', 'Kurtas', 'women', 'REGULAR', 'LOW', 'Cotton mulmul with block print', 5400, 'Teal', '#1f7a7a',
-    'A flared, floor-skimming anarkali, fitted through the bodice and waist.'],
-  ['desi-loom-straight-kurta', 'Straight Kurta', 'desi-loom-womens-kurtas', 'Kurtas', 'women', 'REGULAR', 'NONE', '100% cotton', 2900, 'Mustard', '#d4a72c',
-    'A straight-cut, calf-length kurta with three-quarter sleeves.'],
-  ['stride-training-tee', 'Training Tee', 'stride-tops', 'T-shirts', 'men', 'SLIM', 'HIGH', 'Recycled polyester, 12% elastane', 2900, 'Black', '#1b1c1e',
-    'A close-fitting, quick-dry training tee with four-way stretch.'],
-  ['stride-football-jersey', 'Sky Stripe Football Jersey', 'stride-jerseys', 'Jerseys', 'men', 'REGULAR', 'MEDIUM', 'Recycled polyester piqué, moisture-wicking', 3900, 'Sky & White', '#8ec5ea',
-    'A classic sky-blue and white striped football jersey with a ribbed crew collar and trimmed sleeves. Regular fit — sized by chest.'],
-  ['stride-zip-hoodie', 'Performance Zip Hoodie', 'stride-tops', 'Hoodies', 'unisex', 'RELAXED', 'MEDIUM', 'Brushed-back polyester fleece', 6900, 'Slate', '#55606e',
-    'A relaxed full-zip hoodie in soft brushed fleece with zip pockets.'],
-  ['stride-tapered-jogger', 'Tapered Jogger', 'stride-bottoms', 'Joggers', 'unisex', 'REGULAR', 'HIGH', 'Cotton–polyester terry, elastane', 5400, 'Heather Charcoal', '#4a4d52',
-    'A tapered jogger with an elastic waist and ribbed cuffs.'],
-  ['stride-high-waist-legging', 'High-Waist Legging', 'stride-bottoms', 'Leggings', 'women', 'SLIM', 'HIGH', 'Nylon, 25% elastane', 4900, 'Plum', '#5b2d4f',
-    'A squat-proof high-waist legging with a hidden waistband pocket.'],
-  ['stride-crop-hoodie', 'Cropped Hoodie', 'stride-tops', 'Hoodies', 'women', 'OVERSIZED', 'MEDIUM', 'Cotton fleece', 5900, 'Sage', '#9cae94',
-    'A boxy cropped hoodie with dropped shoulders. Cut generously.'],
-  ['kinfolk-relaxed-short', 'Relaxed Pull-On Short', 'kinfolk-bottoms', 'Shorts', 'unisex', 'RELAXED', 'HIGH', 'Brushed cotton, elastic waist', 4200, 'Navy', '#25324a',
-    'A pull-on short with an elastic waist — the warm-weather Easy Trouser.'],
-];
+// The shop: only garments with a real 3D model (MakeHuman community clothes,
+// CC0), listed in catalog.json and converted by scripts/build-3d-garments.py.
+const CATALOG = JSON.parse(readFileSync(new URL('./catalog.json', import.meta.url), 'utf-8')).garments;
 
 async function main() {
   const brands = {};
@@ -408,8 +339,9 @@ async function main() {
     charts[name] = chart;
   }
 
-  for (const [slug, name, chart, subcategory, gender, fitIntent, stretch, material, priceCents, colorName, colorHex, description] of GARMENTS) {
+  for (const { slug, name, chart, subcategory, gender, fitIntent, stretch, material, priceCents, colorName, colorHex, description } of CATALOG) {
     const sc = charts[chart];
+    if (!sc) throw new Error(`${slug}: unknown size chart ${chart}`);
     const data = {
       name,
       brandId: sc.brandId,
@@ -430,8 +362,21 @@ async function main() {
     await prisma.garment.upsert({ where: { slug }, update: data, create: { slug, ...data } });
   }
 
-  const counts = await Promise.all([prisma.brand.count(), prisma.sizeChart.count(), prisma.garment.count()]);
-  console.log(`seeded: ${counts[0]} brands, ${counts[1]} size charts, ${counts[2]} garments`);
+  // Anything not in the catalogue (earlier items, outfits added by hand)
+  // leaves the shop. Deactivated, not deleted: past recommendations stay valid.
+  const retired = await prisma.garment.updateMany({
+    where: { slug: { notIn: CATALOG.map((g) => g.slug) }, isActive: true },
+    data: { isActive: false },
+  });
+
+  const counts = await Promise.all([
+    prisma.brand.count(),
+    prisma.sizeChart.count(),
+    prisma.garment.count({ where: { isActive: true } }),
+  ]);
+  console.log(
+    `seeded: ${counts[0]} brands, ${counts[1]} size charts, ${counts[2]} garments in the shop (${retired.count} retired)`,
+  );
 }
 
 main()

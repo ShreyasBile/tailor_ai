@@ -236,26 +236,38 @@ Then the app — see §4a.
 
 ---
 
-## 4b. 3D fitting room
+## 4b. 3D fitting room and the catalogue
+
+Every product in the shop is a **real 3D garment**: clothes from the MakeHuman
+community asset packs (CC0 — free to use, credited in
+`apps/web/public/garments/3d/CREDITS.md`). The catalogue is
+`apps/api/prisma/catalog.json`; `npm run db:seed` loads it and retires any
+other item from the shop (deactivated, not deleted).
 
 The product page opens on **3D fit** once you have a size: your scanned 3D
-body wearing the product in any size, in the product's own fabric. Tap a size
-to switch instantly; a size too small clings, rides up over the belly and
-shows strain lines; a size too big hangs longer, with wider sleeves and folds.
-**Fit map** colours each zone and labels it ("Chest 11 cm too small"), the
-ghost button outlines your recommended size, and you can rotate or save the
-image. Built in the browser by `apps/web/src/lib/garment3d.ts` from the same
-fit numbers as Find my size.
+body wearing the garment. MakeHuman clothes are made to fit any MakeHuman
+body, and the scan's body model (Anny) *is* the MakeHuman base mesh, so each
+garment is rebuilt on your exact body in the browser. Most garments hang off
+MakeHuman's helper layers (tights, skirt), which the API computes for your
+body (`GET /v1/me/avatar/helpers`). Sizes: the garment as fitted is your
+recommended size; a smaller one pulls in to the body and rides up, a bigger
+one stands off and hangs longer — from the same fit numbers as Find my size.
+**Fit map** colours each zone, the ghost button outlines your size, and you
+can rotate or save the image. A top is shown with plain trousers, trousers or
+a skirt with a plain tee; dresses and suits on their own.
 
-The fabric comes from each catalogue photo, unwrapped into a texture
-(`apps/web/public/garments/tex/`). After adding or changing product photos,
-with the stack running:
+Rebuilding the 3D garments (after editing `catalog.json`): download the CC0
+packs once from the MakeHuman asset-pack page (shirts01, pants01, skirts01,
+dress01, suits01) into `.data/vendor/mh-assets/<pack>/` and unzip each into
+`x/`, then, with the stack running:
 
 ```bash
-services/reconstruction/.venv/Scripts/python.exe scripts/make-garment-textures.py
+services/reconstruction/.venv/Scripts/python.exe scripts/build-3d-garments.py
 ```
 
-A product without a texture is shown in its catalogue colour.
+Catalogue photos are renders of the 3D garments on an invisible mannequin
+(`/dev/garment-shot?slug=…&sex=male|female`, saved as
+`apps/web/public/garments/<slug>.jpg`).
 
 ## 4c. Fitting room AI photos (optional)
 

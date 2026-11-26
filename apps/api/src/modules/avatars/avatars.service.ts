@@ -29,6 +29,7 @@ const MEASUREMENT_LABELS: Record<string, string> = {
 @Injectable()
 export class AvatarsService {
   private readonly logger = new Logger(AvatarsService.name);
+  private readonly helpersCache = new Map<string, { count: number; positions: string; bodyCoreId: string }>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -203,6 +204,47 @@ export class AvatarsService {
     });
     if (!render) throw new AppError('NOT_FOUND', undefined, "You don't have an avatar yet.");
     return this.getRender(userId, render.id);
+  }
+
+  /**
+   * MakeHuman's helper layers (tights, skirt) for the body in the user's latest
+   * avatar, in the avatar GLB's frame. The shop's 3D garments are MakeHuman
+   * clothes, and most hang off these layers rather than the skin; with them the
+   * browser wraps a garment onto this exact body. Derived from the same shape
+   * vector and scale as the GLB, cached per body profile.
+   */
+  async getBodyHelpers(userId: string): Promise<{ count: number; positions: string; bodyCoreId: string }> {
+    const render = await this.prisma.avatarRender.findFirst({
+      where: { bodyCore: { userId } },
+      orderBy: { createdAt: 'desc' },
+      include: { bodyCore: true },
+    });
+    if (!render) throw new AppError('NOT_FOUND', undefined, "You don't have an avatar yet.");
+    const core = render.bodyCore;
+    const hit = this.helpersCache.get(core.id);
+    if (hit) return hit;
+    const env = loadEnv();
+    const metricScale =
+      core.metricScale && core.metricScale > 0
+        ? core.metricScale
+        : (core.heightCm ?? CANONICAL_HEIGHT_CM) / CANONICAL_HEIGHT_CM;
+    try {
+      const res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/body/helpers`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': env.RECONSTRUCTION_API_KEY },
+        body: JSON.stringify({ shape: core.shapeParams, metricScale }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) throw new Error(`helpers ${res.status}`);
+      const data = (await res.json()) as { count: number; positions: string };
+      const out = { ...data, bodyCoreId: core.id };
+      if (this.helpersCache.size > 200) this.helpersCache.clear();
+      this.helpersCache.set(core.id, out);
+      return out;
+    } catch (err) {
+      this.logger.error(`body helpers failed: ${String(err)}`);
+      throw new AppError('INFERENCE_FAILED', { userId }, "We couldn't prepare your body for the 3D fitting room.");
+    }
   }
 
   // ── Exports ──

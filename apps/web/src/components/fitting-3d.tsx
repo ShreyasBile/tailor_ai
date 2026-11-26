@@ -20,6 +20,8 @@ import {
 import { DEFAULT_LANDMARKS, FIT_COLORS, type Landmarks, type ZoneTag } from '@/lib/tryon';
 import type { AvatarRender, FitDimension, MeasurementsResponse, RecommendationView } from '@/lib/types';
 import { Badge, Button, Card, Spinner, cx } from './ui';
+import { RealScene } from './fitting-3d-real';
+import { loadMhGarment, type MhGarment } from '@/lib/mh-garment';
 
 const SKIN = new THREE.MeshStandardMaterial({
   color: '#d2ae96',
@@ -50,10 +52,26 @@ function dimsFor(rec: RecommendationView, size: string): FitDimension[] {
   return size === rec.recommendedSize ? rec.dimensions : [];
 }
 
-/** The body as one welded, world-space geometry (smooth normals). */
+/** The body as one welded, world-space geometry (smooth normals). A single
+ * indexed mesh keeps its own vertex order — Anny's, which the real garments'
+ * recipes index into. */
 function useBody(url: string) {
   const gltf = useGLTF(url);
   return useMemo(() => {
+    const meshes: THREE.Mesh[] = [];
+    gltf.scene.updateMatrixWorld(true);
+    gltf.scene.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh);
+    });
+    if (meshes.length === 1 && meshes[0]!.geometry.index) {
+      const mesh = meshes[0]!;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', mesh.geometry.getAttribute('position').clone());
+      g.setIndex(mesh.geometry.index!.clone());
+      g.applyMatrix4(mesh.matrixWorld);
+      g.computeVertexNormals();
+      return g;
+    }
     const parts: THREE.BufferGeometry[] = [];
     gltf.scene.updateMatrixWorld(true);
     gltf.scene.traverse((o) => {
@@ -72,12 +90,16 @@ function useBody(url: string) {
 }
 
 /** Product texture (atlas for tops, fabric swatch for bottoms), if made. */
-function useProductTexture(slug: string) {
+function useProductTexture(slug: string, enabled: boolean) {
   const [state, setState] = useState<{
     meta: GarmentTexture;
     map: THREE.Texture;
   } | null>(null);
   useEffect(() => {
+    if (!enabled) {
+      setState(null);
+      return;
+    }
     let live = true;
     setState(null);
     fetch(`/garments/tex/${slug}.json`)
@@ -97,7 +119,7 @@ function useProductTexture(slug: string) {
     return () => {
       live = false;
     };
-  }, [slug]);
+  }, [slug, enabled]);
   return state;
 }
 
@@ -156,7 +178,8 @@ function tagText(t: ZoneTag) {
 }
 
 interface SceneProps {
-  url: string;
+  body: THREE.BufferGeometry;
+  model: BodyModel;
   heightM: number;
   landmarks: Landmarks;
   armLengthCm?: number;
@@ -172,9 +195,41 @@ interface SceneProps {
   onResult: (r: DressResult) => void;
 }
 
-function Scene(p: SceneProps) {
-  const body = useBody(p.url);
+type RootProps = Omit<SceneProps, 'body' | 'model'> & {
+  url: string;
+  mh: MhGarment | null;
+  recDims: FitDimension[];
+};
+
+/** The body once, then the real 3D garment if this product has one, else
+ * the garment built from the product photo. */
+function SceneRoot({ url, mh, recDims, ...p }: RootProps) {
+  const body = useBody(url);
   const model: BodyModel = useMemo(() => analyseBody(body, p.landmarks), [body, p.landmarks]);
+  if (mh && body.getAttribute('position').count === 13718) {
+    return (
+      <RealScene
+        body={body}
+        model={model}
+        garment={mh}
+        kind={p.kind}
+        fitIntent={p.fitIntent}
+        landmarks={p.landmarks}
+        dims={p.dims}
+        recDims={recDims}
+        step={p.step}
+        ghostDims={p.ghostDims}
+        fitMap={p.fitMap}
+        spin={p.spin}
+        onResult={p.onResult}
+      />
+    );
+  }
+  return <Scene {...p} body={body} model={model} />;
+}
+
+function Scene(p: SceneProps) {
+  const { body, model } = p;
   const group = useRef<THREE.Group>(null);
   useFrame((_, dt) => {
     if (p.spin && group.current) group.current.rotation.y += dt * 0.35;
@@ -388,8 +443,19 @@ export function Fitting3D({
   const [result, setResult] = useState<DressResult | null>(null);
   const controls = useRef<OrbitControlsImpl>(null);
   const card = useRef<HTMLDivElement>(null);
-  const tex = useProductTexture(slug);
   const kind = garmentKind(subcategory, category);
+  // The product's real 3D model (MakeHuman, CC0), if it has one.
+  const [mh, setMh] = useState<MhGarment | null | undefined>(undefined);
+  // Without one: the garment built from the product photo's texture.
+  const tex = useProductTexture(slug, mh === null);
+  useEffect(() => {
+    let live = true;
+    setMh(undefined);
+    loadMhGarment(slug).then((g) => live && setMh(g));
+    return () => {
+      live = false;
+    };
+  }, [slug]);
 
   useEffect(() => {
     api<AvatarRender>('/me/avatar')
@@ -416,7 +482,7 @@ export function Fitting3D({
     [rec, ghostOn, size],
   );
 
-  if (avatar === undefined) {
+  if (avatar === undefined || mh === undefined) {
     return (
       <Card className="grid aspect-square place-items-center">
         <Spinner />
@@ -489,8 +555,10 @@ export function Fitting3D({
                 </Html>
               }
             >
-              <Scene
+              <SceneRoot
                 url={avatar.assets.glb.url}
+                mh={mh}
+                recDims={dimsFor(rec, rec.recommendedSize)}
                 heightM={heightM}
                 landmarks={landmarks}
                 armLengthCm={armLengthCm}
