@@ -198,6 +198,10 @@ export interface BodyModel {
   armpitK: number;
   shoulder: Record<Limb, THREE.Vector3>;
   neck: V2;
+  /** Radius of the neck round `neck`, per direction (mid-neck). */
+  neckR: Float64Array;
+  /** Height where the neck meets the shoulders at the sides (side neck point). */
+  neckSideY: number;
 }
 
 export function analyseBody(geometry: THREE.BufferGeometry, landmarks: Landmarks): BodyModel {
@@ -392,6 +396,25 @@ export function analyseBody(geometry: THREE.BufferGeometry, landmarks: Landmarks
         neckHull.reduce((m, q) => m + q[1], 0) / neckHull.length,
       ]
     : [ax, az];
+  let neckR =
+    neckHull.length >= 3 ? smoothRing(polar(neckHull, neck[0], neck[1]), 2) : new Float64Array(NA).fill(0.06 * s);
+  // A thick slice (trapezius caught in it) would open the collar too wide.
+  const meanNeck = neckR.reduce((m, r) => m + r, 0) / NA;
+  if (meanNeck > 0.085 * s || meanNeck < 0.035 * s) neckR = new Float64Array(NA).fill(0.06 * s);
+  // Side neck point: at the sides, where the body flares out past the neck.
+  const sideYs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const y = pos.getY(i);
+    if (part[i] !== 'torso' || y < y0 + l.shoulder * H - 0.04 * s || y > y0 + l.neck * H + 0.02 * s) continue;
+    const dx = pos.getX(i) - neck[0],
+      dz = pos.getZ(i) - neck[1];
+    const phi = Math.atan2(dz, dx);
+    if (Math.abs(Math.sin(phi)) > 0.35) continue;
+    const r = Math.hypot(dx, dz) - sampleRing(neckR, jOf(phi));
+    if (r > 0.008 * s && r < 0.02 * s) sideYs.push(y);
+  }
+  sideYs.sort((p, q) => p - q);
+  const neckSideY = sideYs.length ? sideYs[Math.floor(sideYs.length * 0.7)]! : y0 + (l.neck - 0.02) * H;
 
   return {
     pos,
@@ -414,6 +437,8 @@ export function analyseBody(geometry: THREE.BufferGeometry, landmarks: Landmarks
     armpitK,
     shoulder,
     neck,
+    neckR,
+    neckSideY,
   };
 }
 
@@ -602,22 +627,52 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
   };
   // Atlas u round the trunk: front centre 0.25, wearer's left side 0.5, back
   // centre 0.75 — arc length on the garment, as cloth unrolls flat.
-  const kArcTop = Math.min(kTop, b.armpitK);
-  const uRound = (kf: number, jf: number): number => {
-    const k = nearestK(clamp(Math.round(kf), kBot, kArcTop));
-    const S = arcs[k];
+  // One unrolling for the whole trunk (the chest's), so stripes and plackets
+  // run straight down instead of jogging where the cloth starts to hang.
+  const kArc = nearestK(clamp(kChest, kBot, Math.min(kTop, b.armpitK)));
+  const uRound = (_kf: number, jf: number): number => {
+    const S = arcs[kArc];
     if (!S) return 0.25;
     const P = S[NA]!;
     const u = 0.25 + (sampleArc(S, J_FRONT) - sampleArc(S, jf)) / P;
     return ((u % 1) + 1) % 1;
   };
 
-  // Neckline: lower at the front, a little at the back.
-  const neckDip = (input.kind === 'shirt' || input.kind === 'blazer' || input.kind === 'coat' ? 0.06 : 0.075) * s;
-  const neckY = (x: number, z: number) => {
-    const th = Math.atan2(z - b.neck[1], x - b.neck[0]);
-    const fwd = Math.sin(th); // +1 front, −1 back
-    return topY - neckDip * Math.max(0, fwd) ** 1.6 - 0.012 * s * Math.max(0, -fwd) ** 2;
+  // Neckline: an oval opening round the base of the neck — the neck's own
+  // outline plus a little room, scooped lower in front — so the collar hugs
+  // the neck all the way round instead of running out along the shoulders.
+  // Three limits, each measured along the body so the rib is even all round:
+  // a ring a little out from the neck (the opening hugs the neck), a plane
+  // tilting down to the front (the crew scoop), and no higher than the side
+  // neck point (no points riding up the neck).
+  const collared = ['shirt', 'blazer', 'coat', 'jacket', 'polo'].includes(input.kind);
+  const drop = (input.kind === 'vest' ? 0.13 : collared ? 0.045 : 0.075) * s;
+  const neckEase = 0.012 * s;
+  const sideY = Math.min(b.neckSideY, topY) + 0.008 * s;
+  const tilt = drop / (sampleRing(b.neckR, J_FRONT) + 0.02 * s);
+  // The scoop's cut curves up toward the sides: a round crew, not a V.
+  const curve = (0.02 * s) / (0.06 * s) ** 2;
+  const gv = new THREE.Vector3();
+  const alongBody = (g: THREE.Vector3, nrmv: THREE.Vector3) => {
+    const gl = g.length();
+    const d = g.dot(nrmv);
+    return Math.max(0.3 * gl, Math.sqrt(Math.max(0, gl * gl - d * d)));
+  };
+  /** Distance (along the body) from the neckline: + on the garment. */
+  const neckOpen = (p: THREE.Vector3, nrmv: THREE.Vector3) => {
+    const dx = p.x - b.neck[0],
+      dz = p.z - b.neck[1];
+    const rh = Math.hypot(dx, dz) || 1e-6;
+    // More room at the sides, where the neck runs into the shoulders.
+    const side = (dx / rh) ** 2;
+    const ring =
+      (rh - sampleRing(b.neckR, jOf(Math.atan2(dz, dx))) - neckEase - 0.01 * s * side) /
+      alongBody(gv.set(dx / rh, 0, dz / rh), nrmv);
+    const fwd = Math.max(0, dz);
+    const lift = curve * dx * dx * Math.min(1, fwd / 0.03);
+    const scoopPlane =
+      (sideY - tilt * fwd + lift - p.y) / alongBody(gv.set(dz > 0 ? 2 * curve * dx : 0, -1, dz > 0 ? -tilt : 0), nrmv);
+    return Math.min(ring, scoopPlane);
   };
   const hemY = (x: number, z: number) => {
     const th = Math.atan2(z - b.az, x - b.ax);
@@ -795,10 +850,10 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
         trim = c;
         zone = nearestZone(f, l, dims, ['waist', 'hip']);
       } else {
-        const ny = neckY(v.x, v.z);
+        const no = neckOpen(v, nv);
         const lowEdge = longTop ? y0 + (drapeF - 0.012) * H : hemY(v.x, v.z);
-        c = Math.min(v.y - lowEdge, ny - v.y);
-        trim = ny - v.y;
+        c = Math.min(v.y - lowEdge, no);
+        trim = no;
         // Out past the shoulder point the cloth is sleeve, whatever the
         // segmentation called it: cut and textured as the sleeve.
         // Above the armpit, out past the shoulder point, the cloth is the
@@ -945,7 +1000,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
   // ── faces, clipped at hems, cuffs and neckline ──
   const cloth = new Emitter(bottom);
   const trimOut = new Emitter(bottom);
-  const trimW = bottom ? 0.035 * s : 0.016 * s;
+  const trimW = bottom ? 0.035 * s : 0.019 * s;
   const cuffDiffers = !!input.tex?.cuff && colourDistance(input.tex.cuff, input.tex.tone) > 45;
   const collarCol = new THREE.Color(
     bottom ? (input.tex?.waistband ?? input.color) : (input.tex?.collar ?? input.color),
@@ -982,7 +1037,7 @@ export function dress(b: BodyModel, input: DressInput): DressResult {
     const main = clipPoly(poly, (r) => r[R.trim]! - trimW);
     if (main.length >= 3) cloth.add(main, limb);
     const band = clipPoly(poly, (r) => trimW - r[R.trim]!);
-    if (band.length >= 3) trimOut.add(band, limb, 0.0015 * s, isSleeve ? cuffCol : collarCol);
+    if (band.length >= 3) trimOut.add(band, limb, (bottom ? 0.0015 : 0.003) * s, isSleeve ? cuffCol : collarCol, trimW);
   };
   for (let t = 0; t < index.count; t += 3) {
     const ids = [index.getX(t), index.getX(t + 1), index.getX(t + 2)];
@@ -1147,7 +1202,9 @@ class Emitter {
   count = 0;
   constructor(private readonly tiled: boolean) {}
 
-  add(poly: number[][], limb: boolean, lift = 0, color?: THREE.Color) {
+  /** `lift` raises a trim off the cloth: rolled (most in the middle of a
+   * band `width` wide, flush at its edges) when a width is given. */
+  add(poly: number[][], limb: boolean, lift = 0, color?: THREE.Color, width = 0) {
     for (let k = 1; k + 1 < poly.length; k++) {
       const tri = [poly[0]!, poly[k]!, poly[k + 1]!];
       const ui = limb ? R.ul : R.u;
@@ -1162,7 +1219,9 @@ class Emitter {
         const nx = r[R.nx]! / nl,
           ny = r[R.nx + 1]! / nl,
           nz = r[R.nx + 2]! / nl;
-        this.p.push(r[R.x]! + nx * lift, r[R.x + 1]! + ny * lift, r[R.x + 2]! + nz * lift);
+        // A rib is thickest at its folded edge and flush where it is sewn on.
+        const h = width > 0 ? lift * Math.cos((Math.PI / 2) * clamp01(r[R.trim]! / width)) : lift;
+        this.p.push(r[R.x]! + nx * h, r[R.x + 1]! + ny * h, r[R.x + 2]! + nz * h);
         this.nrm.push(nx, ny, nz);
         this.uv.push(us[m]!, r[ui + 1]!);
         if (color) this.col.push(color.r, color.g, color.b);

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 
 from .garment import Garment
 from .product import fabric_patch
@@ -60,9 +61,15 @@ def _front_panel(gar: Garment) -> tuple[np.ndarray, np.ndarray]:
     img = gar.image
     t = (np.arange(PANEL_H, dtype=np.float32) + 0.5) / PANEL_H
     ys = gar.y_top + t * (gar.y_hem - gar.y_top)
-    # Above the shoulder line the torso outline narrows to the collar; use the
-    # shoulders' width there so the collar sits in the middle at its own size.
-    x0, x1 = gar.edges(np.maximum(ys, gar.y_shoulder))
+    # Above the shoulder line the outline narrows to the collar: use the
+    # shoulders' width there, so the collar keeps its own size. Near the hem,
+    # the width just above its rounded corners (or outer stripes would bow).
+    x0, x1 = gar.edges(np.clip(ys, gar.y_shoulder, gar.y_top + 0.88 * (gar.y_hem - gar.y_top)))
+    # The outline steps in where the sleeves join; unwrapped as-is, stripes
+    # and plackets would jog sideways there. A smooth outline keeps them true.
+    sig = 0.06 * PANEL_H
+    x0 = gaussian_filter1d(x0, sig, mode="nearest")
+    x1 = gaussian_filter1d(x1, sig, mode="nearest")
     # A sliver in from each side: the outline itself is edge pixels.
     s = 0.015 + 0.97 * (np.arange(PANEL_W, dtype=np.float32) + 0.5) / PANEL_W
     map_x = (x0[:, None] + s[None, :] * (x1 - x0)[:, None]).astype(np.float32)
@@ -116,7 +123,8 @@ def _tile(patch: np.ndarray, w: int, h: int, scale: float) -> np.ndarray:
 def _grain(fabric: np.ndarray, w: int, h: int, scale: float) -> np.ndarray:
     """The cloth's fine texture only (weave, knit), zero-mean."""
     t = _tile(fabric, w, h, scale).astype(np.float32)
-    return t - cv2.GaussianBlur(t, (0, 0), 4)
+    # Clipped: an edge or seam caught in the swatch must not repeat as lines.
+    return np.clip(t - cv2.GaussianBlur(t, (0, 0), 4), -7, 7)
 
 
 def _plain(tone, w: int, h: int, fabric: np.ndarray, scale: float) -> np.ndarray:
