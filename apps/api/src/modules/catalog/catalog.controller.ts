@@ -15,7 +15,6 @@ import { CatalogService } from './catalog.service';
 import { zodBody } from '../../common/zod.pipe';
 import { Public } from '../../common/auth.guard';
 import { CurrentUser, type AuthedUser } from '../../common/current-user.decorator';
-import { loadEnv } from '../../config/env';
 
 @Controller({ version: '1' })
 export class CatalogController {
@@ -90,7 +89,7 @@ export class CatalogController {
   @Public()
   @Get('tryon/capabilities')
   capabilities() {
-    return { aiPhoto: Boolean(loadEnv().GEMINI_API_KEY?.trim()) };
+    return this.catalog.tryOnCapabilities();
   }
 
   // ── Find My Size ──

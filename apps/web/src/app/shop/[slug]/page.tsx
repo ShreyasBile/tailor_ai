@@ -6,7 +6,7 @@ import { ArrowLeft, Check, Info, Ruler, ScanLine, Sparkles, ThumbsDown, ThumbsUp
 import { api, ApiError } from '@/lib/api';
 import { fmtNumber, fmtPrice, relativeDate, titleCase, type Units } from '@/lib/format';
 import { useSession } from '@/lib/session';
-import type { FitDimension, FitPreference, GarmentDetail, PhotoTryOnView, RecommendationView } from '@/lib/types';
+import type { FitDimension, FitPreference, GarmentDetail, PhotoTryOnView, RecommendationView, TryOnCapabilities } from '@/lib/types';
 import { ProductImage } from '@/components/garment-art';
 import { FittingRoom } from '@/components/fitting-room';
 import { ScoreRing } from '@/components/score-ring';
@@ -48,12 +48,13 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
   const [view, setView] = useState<'product' | 'onme' | 'photo'>('product');
   // A Gemini try-on photo made earlier for this item (optional feature).
   const [saved, setSaved] = useState<PhotoTryOnView | null>(null);
-  const [aiPhoto, setAiPhoto] = useState(false);
+  const [caps, setCaps] = useState<TryOnCapabilities | null>(null);
+  const aiPhoto = !!caps?.aiPhoto;
 
   useEffect(() => {
-    api<{ aiPhoto: boolean }>('/tryon/capabilities', { auth: false })
-      .then((c) => setAiPhoto(c.aiPhoto))
-      .catch(() => setAiPhoto(false));
+    api<TryOnCapabilities>('/tryon/capabilities', { auth: false })
+      .then(setCaps)
+      .catch(() => setCaps({ aiPhoto: false, gemini: false, local: false }));
   }, []);
 
   useEffect(() => {
@@ -167,6 +168,7 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
               preference={pref}
               onNeedSize={() => findSize(pref)}
               busy={busy}
+              caps={caps}
             />
           ) : view === 'photo' && user && g.imageUrl ? (
             <PhotoTryOn slug={g.slug} garmentName={g.name} imageUrl={g.imageUrl} saved={saved} onSaved={setSaved} />

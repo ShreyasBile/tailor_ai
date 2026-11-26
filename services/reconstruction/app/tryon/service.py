@@ -11,6 +11,7 @@ import time
 from collections import OrderedDict
 
 import cv2
+import numpy as np
 
 from ..storage import fetch_image
 from . import parse as parse_mod
@@ -41,7 +42,70 @@ def _parsed(person_key: str, url: str, height_cm: float, view: str) -> parse_mod
     return parse_mod.parse_cached(key, fetch_image(url), height_cm, view)
 
 
+class EngineUnavailable(RuntimeError):
+    pass
+
+
 def preview(req) -> dict:
+    """Fast engine: our renderer. AI engines refine its sized draft."""
+    engine = getattr(req, "engine", "fast")
+    if engine == "fast":
+        return _fast(req)
+    from . import ai
+
+    started = time.perf_counter()
+    if engine == "gemini" and not ai.gemini_enabled():
+        raise EngineUnavailable("The Gemini engine needs GEMINI_API_KEY in .env.")
+    if engine == "local" and not ai.local_enabled():
+        raise EngineUnavailable("The on-device AI engine isn't running (scripts/setup-tryon-ai.ps1).")
+    draft = _fast(req, keep_parts=True)
+    akey = draft["_key"] + f"|{engine}|v1"
+    data = ai.cache_get(akey)
+    model = "cache"
+    if data is None:
+        p, out = draft["_parsed"], draft["_out"]
+        x0, y0, x1, y1 = out.box
+        original = p.image[y0:y1, x0:x1]
+        what = req.garment.name if req.mode == "product" else "the top they are wearing"
+        own = req.mode == "own"
+        if engine == "gemini":
+            from ..llm import gemini
+
+            product = None if own or not req.garment.imageUrl else _fetch_bytes(req.garment.imageUrl)
+            fit = ai.describe_fit(draft["_g"], req.size)
+            try:
+                data, model = ai.gemini_photo(original, out.image, product, what, req.size, fit, own)
+            except gemini.OutOfCredits as exc:
+                raise EngineUnavailable("Gemini is out of credits — top up in Google AI Studio.") from exc
+        else:
+            if own:
+                garment_img, flat = original, False  # the top as worn in the photo
+            else:
+                garment_img, flat = fetch_image(req.garment.imageUrl), True
+            data, model = ai.local_photo(out.image, garment_img, req.garment.category.lower(), flat)
+        ai.cache_put(akey, data)
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    res = {k: v for k, v in draft.items() if not k.startswith("_")}
+    res.update({
+        "imageBase64": base64.b64encode(data).decode(),
+        "width": int(img.shape[1]),
+        "height": int(img.shape[0]),
+        "engine": engine,
+        "model": model,
+        "elapsedMs": int((time.perf_counter() - started) * 1000),
+    })
+    return res
+
+
+def _fetch_bytes(url: str) -> bytes:
+    from ..storage import fetch_bytes
+
+    if url.startswith(("http://", "https://", "data:")):
+        return fetch_bytes(url)
+    return open(url, "rb").read()
+
+
+def _fast(req, keep_parts: bool = False) -> dict:
     started = time.perf_counter()
     cat = req.garment.category.lower()
     if cat not in TOP_CATEGORIES and req.mode == "own":
@@ -51,7 +115,7 @@ def preview(req) -> dict:
                      req.garment.imageUrl or "", req.size, req.recommended, sizes_sig, f"{req.amplify:.2f}"])
     with _lock:
         hit = _results.get(rkey)
-        if hit is not None:
+        if hit is not None and not keep_parts:
             _results.move_to_end(rkey)
             return {**hit, "cached": True, "elapsedMs": int((time.perf_counter() - started) * 1000)}
 
@@ -89,10 +153,13 @@ def preview(req) -> dict:
         "tightness": round(g.tightness, 2),
         "looseness": round(g.looseness, 2),
     }
+    result["engine"] = "fast"
     with _lock:
         _results[rkey] = result
         while len(_results) > 120:
             _results.popitem(last=False)
+    if keep_parts:
+        return {**result, "_key": rkey, "_parsed": p, "_out": out, "_g": g}
     log.info("try-on %s %s %s %s: %d ms", req.mode, req.garment.slug, req.size, req.view,
              int((time.perf_counter() - started) * 1000))
     return {**result, "cached": False, "elapsedMs": int((time.perf_counter() - started) * 1000)}
@@ -154,4 +221,4 @@ def _bottoms(p, g, req):
         a = anchors.get(z.name)
         if a is not None:
             zones.append({"name": z.name, "label": z.label, "tone": z.tone, "text": z.text, **a})
-    return Rendered(crop, zones, g.summary)
+    return Rendered(crop, zones, g.summary, (int(x0), int(y0), int(x1), int(y1)))

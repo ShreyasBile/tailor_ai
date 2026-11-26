@@ -391,3 +391,5 @@ class TryOnPreviewRequest(BaseModel):
     size: str
     recommended: str
     amplify: float = Field(default=1.0, ge=0.5, le=2.0)
+    # fast = our renderer; gemini / local = an image model refining its draft
+    engine: Literal["fast", "gemini", "local"] = "fast"

@@ -423,16 +423,26 @@ def photo_tryon(req: PhotoTryOnRequest) -> dict:
     return {"imageBase64": base64.b64encode(data).decode(), "mimeType": out_mime, "model": model}
 
 
+@app.get("/tryon/engines", dependencies=[Depends(require_api_key)])
+def tryon_engines() -> dict:
+    """Which AI photo engines are available right now."""
+    from .tryon.ai import engines
+
+    return engines()
+
+
 @app.post("/tryon/preview", dependencies=[Depends(require_api_key)])
 def tryon_preview(req: TryOnPreviewRequest) -> dict:
     """The shopper's own scan photo, re-dressed: a catalogue garment (mode
     "product") or the outfit they're wearing (mode "own"), in a given size.
     Local — no generative model, nothing leaves this machine."""
     from .tryon.parse import ParseError
-    from .tryon.service import Unsupported, preview
+    from .tryon.service import EngineUnavailable, Unsupported, preview
 
     try:
         return preview(req)
+    except EngineUnavailable as exc:
+        raise HTTPException(status_code=503, detail={"code": "ENGINE_UNAVAILABLE", "message": str(exc)}) from exc
     except Unsupported as exc:
         raise HTTPException(status_code=422, detail={"code": "TRYON_UNSUPPORTED", "message": str(exc)}) from exc
     except ParseError as exc:

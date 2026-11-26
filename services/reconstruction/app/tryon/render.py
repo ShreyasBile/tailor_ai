@@ -36,6 +36,7 @@ class Rendered:
     image: np.ndarray  # BGR, cropped to the person
     zones: list[dict]  # caption anchors, x/y as fractions of the image
     summary: str
+    box: tuple[int, int, int, int] = (0, 0, 0, 0)  # crop in working px: x0, y0, x1, y1
 
 
 # ── small helpers ──
@@ -706,7 +707,7 @@ def _finish(p: Parsed, canvas: np.ndarray, tw: TorsoWarp, sleeves, g: FitGeometr
         if a is None:
             continue
         zones.append({"name": z.name, "label": z.label, "tone": z.tone, "text": z.text, **a})
-    return Rendered(crop, zones, g.summary)
+    return Rendered(crop, zones, g.summary, (int(x0), int(y0), int(x1), int(y1)))
 
 
 def prof_x(tw: TorsoWarp) -> float:

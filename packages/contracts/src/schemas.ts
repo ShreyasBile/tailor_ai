@@ -719,6 +719,12 @@ export const FitPreviewRequest = z.object({
   mode: z.enum(['product', 'own']).default('product'),
   view: z.enum(['front', 'back']).default('front'),
   preference: FitPreference.optional(),
+  /** fast: TailorAI's own renderer (instant, local). gemini / local: an image
+   * model makes the sized draft photoreal — gemini in Google's cloud, local
+   * on this server's GPU. */
+  engine: z.enum(['fast', 'gemini', 'local']).default('fast'),
+  /** Required for gemini: the shopper's OK to send their scan photo to Google. */
+  consent: z.boolean().optional(),
 });
 export type FitPreviewRequest = z.infer<typeof FitPreviewRequest>;
 
@@ -748,8 +754,18 @@ export const FitPreviewView = z.object({
   view: z.enum(['front', 'back']),
   backAvailable: z.boolean(),
   elapsedMs: z.number(),
+  engine: z.enum(['fast', 'gemini', 'local']),
+  model: z.string().optional(),
 });
 export type FitPreviewView = z.infer<typeof FitPreviewView>;
+
+export const TryOnCapabilities = z.object({
+  /** legacy: Gemini photo try-on available */
+  aiPhoto: z.boolean(),
+  gemini: z.boolean(),
+  local: z.boolean(),
+});
+export type TryOnCapabilities = z.infer<typeof TryOnCapabilities>;
 
 // ─────────────────────────── Accuracy check (tape vs scan) ───────────────────
 

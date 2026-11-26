@@ -236,6 +236,28 @@ Then the app — see §4a.
 
 ---
 
+## 4b. Fitting room AI photos (optional)
+
+The product page's **On me** tab always works with TailorAI's own renderer
+(instant, offline). Two optional engines turn that sized draft into a
+photo-real image — the fit (tight, cropped, roomy) comes from our draft and
+the fit numbers, so the AI can't flatter a wrong size:
+
+- **Gemini** (cloud): put `GEMINI_API_KEY=...` in `.env` (Google AI Studio,
+  image generation enabled) and restart. The shopper is asked to consent
+  before their photo is sent.
+- **On this PC** (FASHN VTON v1.5, Apache-2.0, ~8 GB VRAM): run once
+
+  ```bash
+  powershell -ExecutionPolicy Bypass -File scripts/setup-tryon-ai.ps1
+  ```
+
+  (~5 GB into `.data/vendor`). The launcher then starts the worker
+  (`services/tryon-ai`, port 8002) automatically.
+
+AI photos take ~10–60 s and are cached in `.data/tryon-cache`, so open the
+sizes you'll show once before a demo and they'll appear instantly.
+
 ## 4a. Testing on a phone (Flutter, Android)
 
 The mobile app is **Flutter** (`apps/app_flutter`). It compiles to a native

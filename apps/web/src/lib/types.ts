@@ -27,6 +27,7 @@ export type {
   PhotoTryOnView,
   FitPreviewView,
   FitZone,
+  TryOnCapabilities,
 } from '@tailorai/contracts';
 
 export const VIEWS = ['front', 'back', 'left', 'right'] as const;

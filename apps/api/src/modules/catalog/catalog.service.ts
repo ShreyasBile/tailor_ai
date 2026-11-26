@@ -224,6 +224,9 @@ export class CatalogService {
     if (!core || core.measurements.length === 0 || !core.job) {
       throw new AppError('NOT_FOUND', { userId }, 'Scan your body first — the fitting room uses your scan photos.');
     }
+    if (req.engine === 'gemini' && req.consent !== true) {
+      throw new AppError('CONSENT_REQUIRED', { engine: 'gemini' }, 'Agree to send your scan photo to Google Gemini first.');
+    }
     const photos = await this.prisma.asset.findMany({
       where: { sessionId: core.job.sessionId, kind: 'RAW_PHOTO' },
       orderBy: { createdAt: 'desc' },
@@ -283,8 +286,10 @@ export class CatalogService {
           sizes: fit.sizes,
           size,
           recommended: fit.recommendedSize,
+          engine: req.engine,
         }),
-        signal: AbortSignal.timeout(60_000),
+        // AI engines take 10–60 s (a cold local GPU the longest).
+        signal: AbortSignal.timeout(req.engine === 'fast' ? 60_000 : 270_000),
       });
     } catch (err) {
       this.logger.error(`fit preview failed: ${String(err)}`);
@@ -295,6 +300,7 @@ export class CatalogService {
         ?.detail;
       this.logger.warn(`fit preview ${res.status}: ${detail?.code ?? ''} ${detail?.message ?? ''}`);
       if (res.status === 422 && detail?.message) throw new AppError('VALIDATION_FAILED', { slug }, detail.message);
+      if (res.status === 503 && detail?.message) throw new AppError('GPU_UNAVAILABLE', { slug }, detail.message);
       throw new AppError('INFERENCE_FAILED', undefined, "We couldn't draw your try-on right now. Please try again.");
     }
     const out = (await res.json()) as Omit<FitPreviewView, 'recommendedSize' | 'sizes' | 'mode' | 'view' | 'backAvailable'>;
@@ -306,6 +312,22 @@ export class CatalogService {
       view: req.view,
       backAvailable: live.some((a) => viewOf(a) === 'back'),
     };
+  }
+
+  /** Which try-on engines this deployment can use right now. */
+  async tryOnCapabilities(): Promise<{ aiPhoto: boolean; gemini: boolean; local: boolean }> {
+    const env = loadEnv();
+    const gemini = Boolean(env.GEMINI_API_KEY?.trim());
+    try {
+      const res = await fetch(`${env.RECONSTRUCTION_URL.replace(/\/$/, '')}/tryon/engines`, {
+        headers: { 'x-api-key': env.RECONSTRUCTION_API_KEY },
+        signal: AbortSignal.timeout(4000),
+      });
+      const e = (await res.json()) as { gemini?: boolean; local?: boolean };
+      return { aiPhoto: gemini, gemini: gemini && e.gemini !== false, local: Boolean(e.local) };
+    } catch {
+      return { aiPhoto: gemini, gemini, local: false };
+    }
   }
 
   // ── Catalogue ──

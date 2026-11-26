@@ -56,6 +56,10 @@ $Health = [ordered]@{
     "orchestrator"   = $null   # no HTTP surface; judged by its process
     "web"            = "http://127.0.0.1:$WebPort/"
 }
+# Optional on-device AI try-on worker (scripts/setup-tryon-ai.ps1).
+$AiPy = "$Root\.data\vendor\venv-ai\Scripts\python.exe"
+$AiReady = (Test-Path $AiPy) -and (Test-Path "$Root\.data\vendor\fashn-weights\model.safetensors")
+if ($AiReady) { $Health["tryon-ai"] = "http://127.0.0.1:8002/health" }
 
 function Test-Healthy {
     param([string]$Url)
@@ -212,6 +216,13 @@ switch ($Action) {
             -Exe "$Root\services\reconstruction\.venv\Scripts\python.exe" `
             -ArgList @("-m", "app.main") `
             -WorkDir "$Root\services\reconstruction" -TimeoutS 180) -and $ok
+
+        if ($AiReady) {
+            # Optional: a failure here never stops the rest of TailorAI.
+            [void](Start-One -Name "tryon-ai" -Exe $AiPy `
+                -ArgList @("-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8002") `
+                -WorkDir "$Root\services	ryon-ai" -TimeoutS 90)
+        }
 
         $ok = (Start-One -Name "api" -Exe "node" -ArgList @("dist/main.js") `
             -WorkDir "$Root\apps\api") -and $ok
