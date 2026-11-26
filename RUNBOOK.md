@@ -236,9 +236,30 @@ Then the app — see §4a.
 
 ---
 
-## 4b. Fitting room AI photos (optional)
+## 4b. 3D fitting room
 
-The product page's **On me** tab always works with TailorAI's own renderer
+The product page opens on **3D fit** once you have a size: your scanned 3D
+body wearing the product in any size, in the product's own fabric. Tap a size
+to switch instantly; a size too small clings, rides up over the belly and
+shows strain lines; a size too big hangs longer, with wider sleeves and folds.
+**Fit map** colours each zone and labels it ("Chest 11 cm too small"), the
+ghost button outlines your recommended size, and you can rotate or save the
+image. Built in the browser by `apps/web/src/lib/garment3d.ts` from the same
+fit numbers as Find my size.
+
+The fabric comes from each catalogue photo, unwrapped into a texture
+(`apps/web/public/garments/tex/`). After adding or changing product photos,
+with the stack running:
+
+```bash
+services/reconstruction/.venv/Scripts/python.exe scripts/make-garment-textures.py
+```
+
+A product without a texture is shown in its catalogue colour.
+
+## 4c. Fitting room AI photos (optional)
+
+The product page's **Photo fit** tab always works with TailorAI's own renderer
 (instant, offline). Two optional engines turn that sized draft into a
 photo-real image — the fit (tight, cropped, roomy) comes from our draft and
 the fit numbers, so the AI can't flatter a wrong size:

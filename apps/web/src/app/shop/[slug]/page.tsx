@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { ArrowLeft, Check, Info, Ruler, ScanLine, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { api, ApiError } from '@/lib/api';
@@ -11,6 +12,16 @@ import { ProductImage } from '@/components/garment-art';
 import { FittingRoom } from '@/components/fitting-room';
 import { ScoreRing } from '@/components/score-ring';
 import { Badge, Button, ButtonLink, Card, Segmented, Spinner, cx } from '@/components/ui';
+
+// three.js only runs in the browser.
+const Fitting3D = dynamic(() => import('@/components/fitting-3d').then((m) => m.Fitting3D), {
+  ssr: false,
+  loading: () => (
+    <Card className="grid aspect-square place-items-center">
+      <Spinner />
+    </Card>
+  ),
+});
 
 /** The fit detail for one size; older stored recommendations only carry the
  * recommended size's. */
@@ -45,7 +56,7 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
   const [needsScan, setNeedsScan] = useState(false);
   const [units, setUnits] = useState<Units>('cm');
   const [selectedSize, setSelectedSize] = useState<string | null>(null);
-  const [view, setView] = useState<'product' | 'onme' | 'photo'>('product');
+  const [view, setView] = useState<'product' | '3d' | 'onme' | 'photo'>('product');
   // A Gemini try-on photo made earlier for this item (optional feature).
   const [saved, setSaved] = useState<PhotoTryOnView | null>(null);
   const [caps, setCaps] = useState<TryOnCapabilities | null>(null);
@@ -90,8 +101,8 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
           setRec(r);
           setPref(r.preference);
           setSelectedSize(r.recommendedSize);
-          // Already sized for this item: open the fitting room straight away.
-          setView('onme');
+          // Already sized for this item: open the 3D fitting room straight away.
+          setView('3d');
         }
       })
       .catch(() => {});
@@ -151,13 +162,28 @@ export default function ProductPage({ params }: { params: Promise<{ slug: string
                 onChange={setView}
                 options={[
                   { value: 'product', label: 'Product' },
-                  { value: 'onme', label: 'On me' },
+                  { value: '3d', label: '3D fit' },
+                  { value: 'onme', label: 'Photo fit' },
                   ...(aiPhoto && g.imageUrl ? [{ value: 'photo' as const, label: 'AI photo' }] : []),
                 ]}
               />
             </div>
           )}
-          {view === 'onme' && user ? (
+          {view === '3d' && user ? (
+            <Fitting3D
+              slug={g.slug}
+              garmentName={g.name}
+              subcategory={g.subcategory}
+              category={g.category}
+              fitIntent={g.fitIntent}
+              colorHex={g.colorHex}
+              rec={rec}
+              selectedSize={selectedSize}
+              onSelectSize={setSelectedSize}
+              onNeedSize={() => findSize(pref)}
+              busy={busy}
+            />
+          ) : view === 'onme' && user ? (
             <FittingRoom
               slug={g.slug}
               garmentName={g.name}

@@ -134,3 +134,22 @@ def teardown_module(_m):
         for f in d.glob("*"):
             f.unlink()
         d.rmdir()
+
+
+def _lum(hex_colour: str) -> float:
+    r, g, b = (int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def test_texture_atlas_for_the_3d_fitting_room():
+    from app.tryon.texture import SIZE, atlas
+
+    tex, meta = atlas(read(cv2.imread(str(GARMENTS / "stride-football-jersey.jpg")), "top"))
+    assert tex.shape == (SIZE, SIZE, 3)
+    assert meta["pattern"] == "vertical"  # its stripes carry round to the back
+    assert _lum(meta["collar"]) < 80 and _lum(meta["cuff"]) < 80  # black collar and cuffs
+    assert _lum(meta["tone"]) > 150
+    tee, m2 = atlas(read(cv2.imread(str(GARMENTS / "northline-essential-tee.jpg")), "top"))
+    assert m2["pattern"] == "plain"
+    back = tee[100:700, 512:].reshape(-1, 3).astype(float)
+    assert back.std(axis=0).max() < 12  # a plain back, no ghost of the front's collar

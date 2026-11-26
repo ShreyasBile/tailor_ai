@@ -40,9 +40,9 @@ export const DEFAULT_LANDMARKS: Landmarks = {
   thigh: 0.44,
 };
 
-type Sleeve = 'none' | 'short' | 'elbow' | 'threeQuarter' | 'long';
+export type Sleeve = 'none' | 'short' | 'elbow' | 'threeQuarter' | 'long';
 
-interface Spec {
+export interface Spec {
   top: (l: Landmarks) => number;
   hem: (l: Landmarks) => number;
   sleeve: Sleeve;
@@ -56,8 +56,8 @@ interface Spec {
   ease: { chest: number; waist: number; hip: number; thigh: number };
 }
 
-const topNeck = (l: Landmarks) => l.neck - 0.012;
-const SPECS: Record<Kind, Spec> = {
+export const topNeck = (l: Landmarks) => l.neck - 0.012;
+export const SPECS: Record<Kind, Spec> = {
   tee: { top: topNeck, hem: (l) => l.hip - 0.03, sleeve: 'short', legs: 'none', drape: false, flare: 0, ease: { chest: 9, waist: 10, hip: 9, thigh: 0 } },
   polo: { top: topNeck, hem: (l) => l.hip - 0.035, sleeve: 'short', legs: 'none', drape: false, flare: 0, ease: { chest: 10, waist: 11, hip: 10, thigh: 0 } },
   shirt: { top: topNeck, hem: (l) => l.hip - 0.06, sleeve: 'long', legs: 'none', drape: false, flare: 0, ease: { chest: 11, waist: 12, hip: 10, thigh: 0 } },
@@ -76,8 +76,8 @@ const SPECS: Record<Kind, Spec> = {
   dress: { top: topNeck, hem: () => 0.24, sleeve: 'none', legs: 'none', drape: true, flare: 0.1, ease: { chest: 8, waist: 8, hip: 10, thigh: 0 } },
 };
 
-const CUT_MULT: Record<string, number> = { SLIM: 0.6, REGULAR: 1.0, RELAXED: 1.5, OVERSIZED: 2.2 };
-const SLEEVE_FRAC: Record<Sleeve, number> = { none: 0, short: 0.32, elbow: 0.5, threeQuarter: 0.72, long: 1 };
+export const CUT_MULT: Record<string, number> = { SLIM: 0.6, REGULAR: 1.0, RELAXED: 1.5, OVERSIZED: 2.2 };
+export const SLEEVE_FRAC: Record<Sleeve, number> = { none: 0, short: 0.32, elbow: 0.5, threeQuarter: 0.72, long: 1 };
 
 export interface TryOnInput {
   geometry: THREE.BufferGeometry; // welded body, world frame, metres, Y-up, grounded
@@ -125,7 +125,7 @@ export const FIT_COLORS = {
 /** The scan doubts this measurement (e.g. a thigh read through loose
  * trousers): show the zone as unknown rather than paint a verdict as fact. */
 export const UNSURE_BELOW = 0.3;
-const isUnsure = (d: FitDimension) => d.confidence !== undefined && d.confidence < UNSURE_BELOW;
+export const isUnsure = (d: FitDimension) => d.confidence !== undefined && d.confidence < UNSURE_BELOW;
 
 export function verdictColor(verdict: string): string {
   const v = verdict.toLowerCase();
@@ -140,7 +140,7 @@ export function verdictColor(verdict: string): string {
 
 // ── body segmentation ──
 
-interface Cluster {
+export interface Cluster {
   min: number;
   max: number;
   part: Part;
@@ -149,7 +149,7 @@ interface Cluster {
 /** Splits the body into torso / arms / legs / hands by slicing it into
  * horizontal bands and labelling the blobs in each band. Needs a pose with
  * the arms held off the torso (the scan's A-pose). */
-function segment(pos: THREE.BufferAttribute, index: THREE.BufferAttribute, y0: number, H: number, cx: number, l: Landmarks) {
+export function segment(pos: THREE.BufferAttribute, index: THREE.BufferAttribute, y0: number, H: number, cx: number, l: Landmarks) {
   const nb = 140;
   const bands: number[][] = Array.from({ length: nb }, () => []);
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
@@ -232,14 +232,14 @@ function segment(pos: THREE.BufferAttribute, index: THREE.BufferAttribute, y0: n
 
 // ── ease along the body ──
 
-function dimMap(dims: FitDimension[]) {
+export function dimMap(dims: FitDimension[]) {
   const m = new Map<string, FitDimension>();
   for (const d of dims) m.set(d.name, d);
   return m;
 }
 
 /** Piecewise-linear interpolation over (height, value) knots. */
-function interp(knots: [number, number][], y: number): number {
+export function interp(knots: [number, number][], y: number): number {
   const ks = [...knots].sort((p, q) => p[0] - q[0]);
   if (ks.length === 0) return 0;
   if (y <= ks[0]![0]) return ks[0]![1];
@@ -560,7 +560,7 @@ export function buildTryOn(input: TryOnInput): TryOnResult {
   return { garment, tags, hemY: y0 + hem * H };
 }
 
-function nearestZone(f: number, l: Landmarks, dims: Map<string, FitDimension>, names: string[]): string {
+export function nearestZone(f: number, l: Landmarks, dims: Map<string, FitDimension>, names: string[]): string {
   let best = names.find((nm) => dims.has(nm)) ?? names[0]!;
   let bestD = Infinity;
   for (const nm of names) {
@@ -572,7 +572,7 @@ function nearestZone(f: number, l: Landmarks, dims: Map<string, FitDimension>, n
 }
 
 /** Every point where the body's surface crosses height y, as (x, z). */
-function sectionPoints(pos: THREE.BufferAttribute, index: THREE.BufferAttribute, y: number): [number, number][] {
+export function sectionPoints(pos: THREE.BufferAttribute, index: THREE.BufferAttribute, y: number): [number, number][] {
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const tri = [a, b, c];
   const out: [number, number][] = [];

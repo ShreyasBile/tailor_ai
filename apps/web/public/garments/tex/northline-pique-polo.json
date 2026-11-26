@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "pattern": "plain",
+ "tone": "#30463a",
+ "collar": "#30453a",
+ "cuff": "#35493c",
+ "hasSleeves": true,
+ "shoulder": 0.09353507565337002,
+ "armpit": 0.44353507565337,
+ "sleeve": 0.372184684668504,
+ "widthToLength": 0.6052269601100413,
+ "kind": "top"
+}
